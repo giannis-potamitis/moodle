@@ -14,7 +14,7 @@
 //
 // It is important that capability names are unique. The naming convention
 // for capabilities that are specific to modules and blocks is as follows:
-//   [mod/block]/<plugin_name>:<capabilityname>
+//   [mod/block]/<component_name>:<capabilityname>
 //
 // component_name should be the same as the directory name of the mod or block.
 //
@@ -25,21 +25,24 @@
 //           block/recent_activity:view
 //           moodle/site:deleteuser
 //
-// The variable name for the capability definitions array is $capabilities
+// The variable name for the capability definitions array follows the format
+//   $<componenttype>_<component_name>_capabilities
+//
+// For the core capabilities, the variable is $moodle_capabilities.
 
 
-$capabilities = array(
+$mod_assignment_capabilities = array(
 
     'mod/assignment:view' => array(
 
         'captype' => 'read',
         'contextlevel' => CONTEXT_MODULE,
-        'archetypes' => array(
+        'legacy' => array(
             'guest' => CAP_ALLOW,
             'student' => CAP_ALLOW,
             'teacher' => CAP_ALLOW,
             'editingteacher' => CAP_ALLOW,
-            'manager' => CAP_ALLOW
+            'admin' => CAP_ALLOW
         )
     ),
 
@@ -47,34 +50,21 @@ $capabilities = array(
 
         'captype' => 'write',
         'contextlevel' => CONTEXT_MODULE,
-        'archetypes' => array(
+        'legacy' => array(
             'student' => CAP_ALLOW
         )
     ),
 
     'mod/assignment:grade' => array(
-        'riskbitmask' => RISK_XSS,
 
         'captype' => 'write',
         'contextlevel' => CONTEXT_MODULE,
-        'archetypes' => array(
+        'legacy' => array(
             'teacher' => CAP_ALLOW,
             'editingteacher' => CAP_ALLOW,
-            'manager' => CAP_ALLOW
+            'admin' => CAP_ALLOW
         )
-    ),
-
-    'mod/assignment:exportownsubmission' => array(
-
-        'captype' => 'read',
-        'contextlevel' => CONTEXT_MODULE,
-        'archetypes' => array(
-            'teacher' => CAP_ALLOW,
-            'editingteacher' => CAP_ALLOW,
-            'manager' => CAP_ALLOW,
-            'student' => CAP_ALLOW,
-        )
-    ),
+    )
 );
 
-
+?>
