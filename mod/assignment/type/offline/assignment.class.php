@@ -1,4 +1,12 @@
-<?php // $Id: assignment.class.php,v 1.12.2.2 2008/02/20 17:49:59 skodak Exp $
+<?php
+
+/* ----- Giannis --------------- */
+require_once($CFG->dirroot.'/mod/assignment/locallib.php');
+
+if (is_readable($CFG->dirroot . '/local/cat/locallib.php')) {
+	require_once($CFG->dirroot.'/local/cat/locallib.php');
+}
+/* ----------------------------- */
 
 /**
  * Extend the base assignment class for offline assignments
@@ -19,7 +27,7 @@ class assignment_offline extends assignment_base {
     }
 
     function prepare_new_submission($userid) {
-        $submission = new Object;
+        $submission = new stdClass();
         $submission->assignment   = $this->assignment->id;
         $submission->userid       = $userid;
         $submission->timecreated  = time(); // needed for offline assignments
@@ -38,10 +46,10 @@ class assignment_offline extends assignment_base {
 
     // needed for the timemodified override
     function process_feedback() {
-        global $CFG, $USER;
+        global $CFG, $USER, $DB;
         require_once($CFG->libdir.'/gradelib.php');
 
-        if (!$feedback = data_submitted()) {      // No incoming data?
+        if (!$feedback = data_submitted() or !confirm_sesskey()) {      // No incoming data?
             return false;
         }
 
@@ -66,9 +74,8 @@ class assignment_offline extends assignment_base {
         if (!$grading_info->items[0]->grades[$feedback->userid]->locked and
             !$grading_info->items[0]->grades[$feedback->userid]->overridden) {
 
-            $submission->grade      = $feedback->grade;
-            $submission->submissioncomment    = $feedback->submissioncomment;
-            $submission->format     = $feedback->format;
+            
+            $submission->submissioncomment    = $feedback->submissioncomment_editor['text'];
             $submission->teacher    = $USER->id;
             $mailinfo = get_user_preferences('assignment_mailinfo', 0);
             if (!$mailinfo) {
@@ -78,22 +85,35 @@ class assignment_offline extends assignment_base {
             }
             $submission->timemarked = time();
 
-            if($this->rubric->id)
-                $this->rubric->process_submission($feedback, $submission->id);
-
             unset($submission->data1);  // Don't need to update this.
             unset($submission->data2);  // Don't need to update this.
 
             if (empty($submission->timemodified)) {   // eg for offline assignments
                 $submission->timemodified = time();
             }
-
-            if (! update_record('assignment_submissions', $submission)) {
-                return false;
-            }
+            
+            /* -------- Giannis ---------------------------- */
+            // Set the grade
+            $submission = assignment_set_grade($this->assignment, $submission, $feedback); 
+           	assignment_process_multiple_categories($this->assignment, $submission, $feedback);
+            /* ---------------------------------------------- */
+            
+            /* ----------------- Giannis ------------- */				
+						$mparam = get_markers_param($this->assignment->id);
+						if ($mparam != null && $mparam->type == 0) { // individual marking
+							assignment_process_multiple_markers($this->assignment, $submission, $feedback, $map);
+						}
+						else {
+            
+            $DB->update_record('assignment_submissions', $submission);
 
             // triger grade event
             $this->update_grade($submission);
+            
+            }
+
+						/* --------------------------------------- */
+            
 
             add_to_log($this->course->id, 'assignment', 'update grades',
                        'submissions.php?id='.$this->assignment->id.'&user='.$feedback->userid, $feedback->userid, $this->cm->id);
@@ -105,4 +125,4 @@ class assignment_offline extends assignment_base {
 
 }
 
-?>
+
