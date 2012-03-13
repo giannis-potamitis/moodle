@@ -38,12 +38,7 @@ class assignment_online extends assignment_base {
 
         if ($editmode) {
             // prepare form and process submitted data
-            $editoroptions = array(
-                'noclean'  => false,
-                'maxfiles' => EDITOR_UNLIMITED_FILES,
-                'maxbytes' => $this->course->maxbytes,
-                'context'  => $this->context
-            );
+            $editoroptions = array('noclean'=>false, 'maxfiles'=>EDITOR_UNLIMITED_FILES, 'maxbytes'=>$this->course->maxbytes);
 
             $data = new stdClass();
             $data->id         = $this->cm->id;
@@ -139,7 +134,7 @@ class assignment_online extends assignment_base {
         }
 
         $this->view_feedback();
-
+        
         $this->view_footer();
     }
 
@@ -193,6 +188,7 @@ class assignment_online extends assignment_base {
 
         $submission = $this->get_submission($USER->id);
         $this->update_grade($submission);
+        
         return $submission;
     }
 

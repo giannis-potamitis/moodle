@@ -7,6 +7,10 @@ require("assignment.class.php");
 $id     = required_param('id', PARAM_INT);      // Course Module ID
 $userid = required_param('userid', PARAM_INT);  // User ID
 
+/* ------ Giannis ------- */
+$m = optional_param('m', 0, PARAM_INT); // markers flag. the file is called from markers plugin
+/* ---------------------- */
+
 $PAGE->set_url('/mod/assignment/type/online/file.php', array('id'=>$id, 'userid'=>$userid));
 
 if (! $cm = get_coursemodule_from_id('assignment', $id)) {
@@ -61,7 +65,16 @@ if ($submission = $assignmentinstance->get_submission($user->id)) {
 
     $text = file_rewrite_pluginfile_urls($submission->data1, 'pluginfile.php', $context->id, 'mod_assignment', $assignmentinstance->filearea, $submission->id);
     echo $OUTPUT->box(format_text($text, $submission->data2, array('overflowdiv'=>true)), 'generalbox boxaligncenter boxwidthwide');
-    echo $OUTPUT->close_window_button();
+    /* ---------- Giannis --------- */
+    if ($m == 1) {
+    	$html = "<center>";
+			$html .= "<button name=\"button\" onclick=\"window.close()\">" . get_string('close', 'local_markers') . "</button>"; 
+			$html .= "</center>";
+			echo $html;
+    }
+    else
+    	echo $OUTPUT->close_window_button();
+    /* ---------------------------- */
     echo $OUTPUT->footer();
 } else {
     print_string('emptysubmission', 'assignment');

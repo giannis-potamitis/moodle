@@ -4,6 +4,10 @@ require_once("../../config.php");
 require_once("lib.php");
 require_once($CFG->libdir.'/plagiarismlib.php');
 
+/* --------- Giannis ----------- */
+require_once("locallib.php");
+/* ----------------------------- */
+
 $id   = optional_param('id', 0, PARAM_INT);          // Course module ID
 $a    = optional_param('a', 0, PARAM_INT);           // Assignment ID
 $mode = optional_param('mode', 'all', PARAM_ALPHA);  // What mode are we in?
@@ -39,6 +43,43 @@ if ($id) {
 if ($mode !== 'all') {
     $url->param('mode', $mode);
 }
+
+/* --------------- Giannis ------------------- */
+if (is_readable($CFG->dirroot . '/local/markers/locallib.php') && allow_multiple_markers($assignment->id)) {
+	$type = optional_param('type', -1, PARAM_INT);
+	$assignid = optional_param('assignid', 0, PARAM_INT);
+	$behalf = optional_param('behalf', 0, PARAM_INT);
+	$rcid = optional_param('rcid', 0, PARAM_INT); // return course id
+	$raid = optional_param('raid', 0, PARAM_INT); // return assignment id
+	$rsid = optional_param('rsid', 0, PARAM_INT); // return student id
+	$confirm = optional_param('confirm', 0, PARAM_INT);
+	$tview = optional_param('tview', 0, PARAM_INT); // table view environment
+	$url->param('type', $type);
+	$url->param('assignid', $assignid);
+	$url->param('behalf', $behalf);
+	$url->param('rcid', $rcid);
+	$url->param('raid', $raid);
+	$url->param('rsid', $rsid);
+	$url->param('confirm', $confirm);
+	$url->param('tview', $tview);
+	
+	if ($behalf == 1) {
+		// If user claims that can access this page in a privilege mode
+		// then we have to check it first
+		$context = get_context_instance(CONTEXT_USER, $USER->id);
+		if (!has_capability('local/markers:admin', $context)) { // if the user is not admin
+			$context = get_context_instance(CONTEXT_COURSE, $course->id);
+		 	if (!has_capability('local/markers:editingteacher', $context)) {
+				// the user is not an editing teacher either
+				print_error(get_string('norightpermissions', 'local_markers'));
+				die;
+			}
+		}
+	}
+}
+
+/* ------------------------------------------- */
+
 $PAGE->set_url($url);
 require_login($course->id, false, $cm);
 

@@ -32,6 +32,14 @@ require_once($CFG->libdir.'/formslib.php');
 /** Include calendar/lib.php */
 require_once($CFG->dirroot.'/calendar/lib.php');
 
+/* ----- Giannis --------------- */
+require_once($CFG->dirroot.'/mod/assignment/locallib.php');
+
+if (is_readable($CFG->dirroot . '/local/cat/locallib.php')) {
+	require_once($CFG->dirroot.'/local/cat/locallib.php');
+}
+/* ----------------------------- */
+
 /** ASSIGNMENT_COUNT_WORDS = 1 */
 define('ASSIGNMENT_COUNT_WORDS', 1);
 /** ASSIGNMENT_COUNT_LETTERS = 2 */
@@ -54,8 +62,6 @@ class assignment_base {
     var $cm;
     /** @var object */
     var $course;
-    /** @var stdClass */
-    var $coursecontext;
     /** @var object */
     var $assignment;
     /** @var string */
@@ -121,8 +127,6 @@ class assignment_base {
         } else if (! $this->course = $DB->get_record('course', array('id'=>$this->cm->course))) {
             print_error('invalidid', 'assignment');
         }
-        $this->coursecontext = get_context_instance(CONTEXT_COURSE, $this->course->id);
-        $courseshortname = format_text($this->course->shortname, true, array('context' => $this->coursecontext));
 
         if ($assignment) {
             $this->assignment = $assignment;
@@ -137,7 +141,7 @@ class assignment_base {
         $this->strassignments = get_string('modulenameplural', 'assignment');
         $this->strsubmissions = get_string('submissions', 'assignment');
         $this->strlastmodified = get_string('lastmodified');
-        $this->pagetitle = strip_tags($courseshortname.': '.$this->strassignment.': '.format_string($this->assignment->name, true, array('context' => $this->context)));
+        $this->pagetitle = strip_tags($this->course->shortname.': '.$this->strassignment.': '.format_string($this->assignment->name,true));
 
         // visibility handled by require_login() with $cm parameter
         // get current group only when really needed
@@ -211,7 +215,7 @@ class assignment_base {
         echo $OUTPUT->box_start('generalbox boxaligncenter', 'intro');
         echo format_module_intro('assignment', $this->assignment, $this->cm->id);
         echo $OUTPUT->box_end();
-        echo plagiarism_print_disclosure($this->cm->id);
+        plagiarism_print_disclosure($this->cm->id);
     }
 
     /**
@@ -257,8 +261,6 @@ class assignment_base {
      *
      * This default method prints the teacher picture and name, date when marked,
      * grade and teacher submissioncomment.
-     * If advanced grading is used the method render_grade from the
-     * advanced grading controller is called to display the grade.
      *
      * @global object
      * @global object
@@ -266,31 +268,30 @@ class assignment_base {
      * @param object $submission The submission object or NULL in which case it will be loaded
      */
     function view_feedback($submission=NULL) {
-        global $USER, $CFG, $DB, $OUTPUT, $PAGE;
+        global $USER, $CFG, $DB, $OUTPUT;
         require_once($CFG->libdir.'/gradelib.php');
-        require_once("$CFG->dirroot/grade/grading/lib.php");
 
-        if (!$submission) { /// Get submission for this assignment
-            $userid = $USER->id;
-            $submission = $this->get_submission($userid);
-        } else {
-            $userid = $submission->userid;
-        }
-        // Check the user can submit
-        $canviewfeedback = ($userid == $USER->id && has_capability('mod/assignment:submit', $this->context, $USER->id, false));
-        // If not then check if the user still has the view cap and has a previous submission
-        $canviewfeedback = $canviewfeedback || (!empty($submission) && $submission->userid == $USER->id && has_capability('mod/assignment:view', $this->context));
-        // Or if user can grade (is a teacher or admin)
-        $canviewfeedback = $canviewfeedback || has_capability('mod/assignment:grade', $this->context);
-
-        if (!$canviewfeedback) {
-            // can not view or submit assignments -> no feedback
+        if (!is_enrolled($this->context, $USER, 'mod/assignment:view')) {
+            // can not submit assignments -> no feedback
             return;
         }
 
-        $grading_info = grade_get_grades($this->course->id, 'mod', 'assignment', $this->assignment->id, $userid);
+        if (!$submission) { /// Get submission for this assignment
+            $submission = $this->get_submission($USER->id);
+        }
+        // Check the user can submit
+        $cansubmit = has_capability('mod/assignment:submit', $this->context, $USER->id, false);
+        // If not then check if the user still has the view cap and has a previous submission
+        $cansubmit = $cansubmit || (!empty($submission) && has_capability('mod/assignment:view', $this->context, $USER->id, false));
+
+        if (!$cansubmit) {
+            // can not submit assignments -> no feedback
+            return;
+        }
+
+        $grading_info = grade_get_grades($this->course->id, 'mod', 'assignment', $this->assignment->id, $USER->id);
         $item = $grading_info->items[0];
-        $grade = $item->grades[$userid];
+        $grade = $item->grades[$USER->id];
 
         if ($grade->hidden or $grade->grade === false) { // hidden or error
             return;
@@ -309,41 +310,64 @@ class assignment_base {
         }
 
     /// Print the feedback
-        echo $OUTPUT->heading(get_string('feedbackfromteacher', 'assignment', fullname($teacher)));
+    
+    		/* ---------------- Giannis -------------- */
+    		$allowmarkers = allow_multiple_markers($this->assignment->id);
+    		/* --------------------------------------- */
+    
+    		if ($allowmarkers == null) /* -------- Giannis/ ------------*/
+        	echo $OUTPUT->heading(get_string('feedbackfromteacher', 'assignment', fullname($teacher)));
+        else { /* --------- Giannis ---------- */
+        	echo $OUTPUT->heading(get_string('feedbackfrommarkers', 'local_markers'));
+        }
+        /* ------------- */
 
         echo '<table cellspacing="0" class="feedback">';
+        
+        if ($allowmarkers == null) { /* ------------------ Giannis/ ----------------- */
+        	echo '<tr>';
+        	echo '<td class="left picture">';
 
-        echo '<tr>';
-        echo '<td class="left picture">';
-        if ($teacher) {
-            echo $OUTPUT->user_picture($teacher);
-        }
-        echo '</td>';
-        echo '<td class="topic">';
-        echo '<div class="from">';
-        if ($teacher) {
-            echo '<div class="fullname">'.fullname($teacher).'</div>';
-        }
-        echo '<div class="time">'.userdate($graded_date).'</div>';
-        echo '</div>';
-        echo '</td>';
-        echo '</tr>';
+        	if ($teacher) {
+        	    echo $OUTPUT->user_picture($teacher);
+        	}
+        	echo '</td>';
+        	echo '<td class="topic">';
+        	echo '<div class="from">';
+        
+        	if ($teacher) {
+        	    echo '<div class="fullname">'.fullname($teacher).'</div>';
+        	}
+        
+        	        
+        	echo '<div class="time">'.userdate($graded_date).'</div>';
+        	echo '</div>';
+        	echo '</td>';
+        	echo '</tr>';
+        
+      	}
+      	else { /* -------------- Giannis ------------- */
+      		echo assignment_output_markers($USER->id, $this->course->id, $this->assignment->id, userdate($graded_date));
+      	}
+      	/* --------------------------------------------*/
+      	
+
 
         echo '<tr>';
         echo '<td class="left side">&nbsp;</td>';
         echo '<td class="content">';
-        $gradestr = '<div class="grade">'. get_string("grade").': '.$grade->str_long_grade. '</div>';
-        if (!empty($submission) && $controller = get_grading_manager($this->context, 'mod_assignment', 'submission')->get_active_controller()) {
-            $controller->set_grade_range(make_grades_menu($this->assignment->grade));
-            echo $controller->render_grade($PAGE, $submission->id, $item, $gradestr, has_capability('mod/assignment:grade', $this->context));
-        } else {
-            echo $gradestr;
-        }
+        echo '<div class="grade">';
+        echo get_string("grade").': '.$grade->str_long_grade;;
+        echo '</div>';
         echo '<div class="clearer"></div>';
-
         echo '<div class="comment">';
         echo $grade->str_feedback;
         echo '</div>';
+        
+        /* ------ Giannis ----- */
+        // Add details for each marking category
+        assignment_view_marking_details($this->assignment, $submission);
+        /* -------------------- */
         echo '</tr>';
 
          if ($this->type == 'uploadsingle') { //@TODO: move to overload view_feedback method in the class or is uploadsingle merging into upload?
@@ -400,8 +424,7 @@ class assignment_base {
         } else {
             if (isloggedin()) {
                 if ($submission = $this->get_submission($USER->id)) {
-                    // If the submission has been completed
-                    if ($this->is_submitted_with_required_data($submission)) {
+                    if ($submission->timemodified) {
                         if ($submission->timemodified <= $this->assignment->timedue || empty($this->assignment->timedue)) {
                             $submitted = '<span class="early">'.userdate($submission->timemodified).'</span>';
                         } else {
@@ -461,7 +484,7 @@ class assignment_base {
      * @return int The id of the assignment
      */
     function add_instance($assignment) {
-        global $COURSE, $DB;
+        global $COURSE, $DB, $CFG;
 
         $assignment->timemodified = time();
         $assignment->courseid = $assignment->course;
@@ -486,6 +509,27 @@ class assignment_base {
         }
 
         assignment_grade_item_update($assignment);
+        
+        /* ------- Giannis ----------- */
+				if (is_readable($CFG->dirroot . '/local/cat/locallib.php')) {				        
+	        if (!isset($_POST['multiplecat']) || $_POST['multiplecat'] == 0) {
+	        	//remove_multiple_categories($assignment->id, $_POST); not needed here
+	        }
+	        else {
+	        	update_multiple_categories ($assignment->id, $_POST);
+	        }
+        }
+
+				if (is_readable($CFG->dirroot . '/local/markers/locallib.php')) {
+    			require_once($CFG->dirroot . "/local/markers/locallib.php");
+    		
+    			if (isset($_POST['multiplemarkers']) && $_POST['multiplemarkers'] == 1)
+    				multiple_markers_assignment($assignment->id, $assignment->course, true);
+    			else
+      			multiple_markers_assignment($assignment->id, $assignment->course, false);
+      	}
+        
+        /* --------------------------- */        
 
         return $returnid;
     }
@@ -528,6 +572,61 @@ class assignment_base {
         $mod = $DB->get_field('modules','id',array('name'=>'assignment'));
 
         assignment_grade_item_delete($assignment);
+        
+        /* ----------- Giannis ------------ */
+        if (is_readable($CFG->dirroot . '/local/cat/locallib.php')) {
+        	$cat = $DB->get_record('cat', array('assignmentid' => $assignment->id));
+        	if ($cat != null) {
+        		$categories = $DB->get_records('cat_category', array('catid' => $cat->id));
+        		foreach ($categories as $c) {
+        			$subcats = $DB->get_records('cat_subcat', array('categoryid' => $c->id));
+        			foreach ($subcats as $subc) {
+        				if (! $DB->delete_records('cat_subcat_submission', array('subcatid' => $subc->id))) {
+        					$result = false;
+        				}
+        			}
+        			if (! $DB->delete_records('cat_submission', array('categoryid' => $c->id))) {
+        				$result = false;
+        			}
+        			
+        			if (! $DB->delete_records('cat_subcat', array('categoryid' => $c->id))) {
+        				$result = false;
+        			}
+        		}
+        		if (! $DB->delete_records('cat_category', array('catid' => $cat->id))) {
+        			$result = false;
+        		}
+        		
+        		if (! $DB->delete_records('cat', array('assignmentid' => $assignment->id))) {
+        			$result = false;
+        		}
+        	}
+        }
+        
+        if (is_readable($CFG->dirroot . '/local/markers/locallib.php')) {
+        	$setup = $DB->get_record('markers_setup', array('assignmentid' => $assignment->id));
+        	if ($setup != null) {
+        		$maps = $DB->get_records('markers_map', array('setupid' => $setup->id));
+        		foreach ($maps as $map) {
+        			if (! $DB->delete_records('markers_assess', array('mapid' => $map->id))) {
+        				$result = false;
+        			}
+        			
+        			if (! $DB->delete_records('markers_subassess', array('mapid' => $map->id))) {
+        				$result = false;
+        			}
+        		}
+        		
+        		if (! $DB->delete_records('markers_map', array('setupid' => $setup->id))) {
+        			$result = false;
+        		}
+        		
+        		if (! $DB->delete_records('markers_setup', array('assignmentid' => $assignment->id))) {
+        			$result = false;
+        		}
+        	}
+        }
+        /* -------------------------------- */
 
         return $result;
     }
@@ -547,7 +646,7 @@ class assignment_base {
      * @return bool success
      */
     function update_instance($assignment) {
-        global $COURSE, $DB;
+        global $COURSE, $DB, $CFG;
 
         $assignment->timemodified = time();
 
@@ -588,14 +687,33 @@ class assignment_base {
 
         // get existing grade item
         assignment_grade_item_update($assignment);
+        
+        /* ------- Giannis ----------- */  
+				if (is_readable($CFG->dirroot . '/local/cat/locallib.php')) {				        
+	        if (!isset($_POST['multiplecat']) || $_POST['multiplecat'] == 0) {
+	        	remove_multiple_categories($assignment->id, $_POST);
+	        }
+	        else {
+	        	update_multiple_categories ($assignment->id, $_POST);
+	        }
+        }
+
+				if (is_readable($CFG->dirroot . '/local/markers/locallib.php')) {
+    			require_once($CFG->dirroot . "/local/markers/locallib.php");
+    		
+    			if (isset($_POST['multiplemarkers']) && $_POST['multiplemarkers'] == 1)
+    				multiple_markers_assignment($assignment->id, $assignment->course, true);
+    			else
+      			multiple_markers_assignment($assignment->id, $assignment->course, false);
+      	}      		     
+        
+        /* --------------------------- */
 
         return true;
     }
 
     /**
      * Update grade item for this submission.
-     *
-     * @param stdClass $submission The submission instance
      */
     function update_grade($submission) {
         assignment_update_grades($this->assignment, $submission->userid);
@@ -630,19 +748,14 @@ class assignment_base {
 
         if (is_null($mailinfo)) {
             if (optional_param('sesskey', null, PARAM_BOOL)) {
-                set_user_preference('assignment_mailinfo', 0);
+                set_user_preference('assignment_mailinfo', $mailinfo);
             } else {
                 $mailinfo = get_user_preferences('assignment_mailinfo', 0);
             }
         } else {
             set_user_preference('assignment_mailinfo', $mailinfo);
         }
-
-        if (!($this->validate_and_preprocess_feedback())) {
-            // form was submitted ('Save' or 'Save and next' was pressed, but validation failed)
-            $this->display_submission();
-            return;
-        }
+        
 
         switch ($mode) {
             case 'grade':                         // We are in a main window grading
@@ -659,6 +772,7 @@ class assignment_base {
                 } else {
                     $this->display_submission();
                 }
+                
                 break;
 
             case 'all':                          // Main window, display everything
@@ -772,16 +886,9 @@ class assignment_base {
                 $offset = required_param('offset', PARAM_INT);
                 $nextid = required_param('nextid', PARAM_INT);
                 $id = required_param('id', PARAM_INT);
-                $filter = optional_param('filter', self::FILTER_ALL, PARAM_INT);
-
-                if ($mode == 'next' || $filter !== self::FILTER_REQUIRE_GRADING) {
-                    $offset = (int)$offset+1;
-                }
-                $redirect = new moodle_url('submissions.php',
-                        array('id' => $id, 'offset' => $offset, 'userid' => $nextid,
-                        'mode' => 'single', 'filter' => $filter));
-
-                redirect($redirect);
+                $offset = (int)$offset+1;
+                //$this->display_submission($offset+1 , $nextid);
+                redirect('submissions.php?id='.$id.'&userid='. $nextid . '&mode=single&offset='.$offset);
                 break;
 
             case 'singlenosave':
@@ -792,23 +899,6 @@ class assignment_base {
                 echo "something seriously is wrong!!";
                 break;
         }
-    }
-
-    /**
-     * Checks if grading method allows quickgrade mode. At the moment it is hardcoded
-     * that advanced grading methods do not allow quickgrade.
-     *
-     * Assignment type plugins are not allowed to override this method
-     *
-     * @return boolean
-     */
-    public final function quickgrade_mode_allowed() {
-        global $CFG;
-        require_once("$CFG->dirroot/grade/grading/lib.php");
-        if ($controller = get_grading_manager($this->context, 'mod_assignment', 'submission')->get_active_controller()) {
-            return false;
-        }
-        return true;
     }
 
     /**
@@ -825,7 +915,7 @@ class assignment_base {
 
         $perpage = get_user_preferences('assignment_perpage', 10);
 
-        $quickgrade = get_user_preferences('assignment_quickgrade', 0) && $this->quickgrade_mode_allowed();
+        $quickgrade = get_user_preferences('assignment_quickgrade', 0);
 
         /// Run some Javascript to try and update the parent page
         $output .= '<script type="text/javascript">'."\n<!--\n";
@@ -917,6 +1007,10 @@ class assignment_base {
      */
     function display_grade($grade) {
         global $DB;
+        
+        /* --------- Giannis --------- */
+        $grade = round($grade, 2);
+        /* --------------------------- */
 
         static $scalegrades = array();   // Cache scales for each assignment - they might have different scales!!
 
@@ -958,11 +1052,10 @@ class assignment_base {
      * @param string $extra_javascript
      */
     function display_submission($offset=-1,$userid =-1, $display=true) {
-        global $CFG, $DB, $PAGE, $OUTPUT, $USER;
+        global $CFG, $DB, $PAGE, $OUTPUT;
         require_once($CFG->libdir.'/gradelib.php');
         require_once($CFG->libdir.'/tablelib.php');
         require_once("$CFG->dirroot/repository/lib.php");
-        require_once("$CFG->dirroot/grade/grading/lib.php");
         if ($userid==-1) {
             $userid = required_param('userid', PARAM_INT);
         }
@@ -1000,7 +1093,7 @@ class assignment_base {
         /// Get all ppl that can submit assignments
 
         $currentgroup = groups_get_activity_group($cm);
-        $users = get_enrolled_users($context, 'mod/assignment:submit', $currentgroup, 'u.id');
+        $users = get_enrolled_users($context, 'mod/assignment:view', $currentgroup, 'u.id');
         if ($users) {
             $users = array_keys($users);
             // if groupmembersonly used, remove users who are not in any group
@@ -1023,10 +1116,7 @@ class assignment_base {
             $userfields = user_picture::fields('u', array('lastaccess'));
             $select = "SELECT $userfields,
                               s.id AS submissionid, s.grade, s.submissioncomment,
-                              s.timemodified, s.timemarked,
-                              CASE WHEN s.timemarked > 0 AND s.timemarked >= s.timemodified THEN 1
-                                   ELSE 0 END AS status ";
-
+                              s.timemodified, s.timemarked ";
             $sql = 'FROM {user} u '.
                    'LEFT JOIN {assignment_submissions} s ON u.id = s.userid
                    AND s.assignment = '.$this->assignment->id.' '.
@@ -1039,6 +1129,8 @@ class assignment_base {
 
             if (is_array($auser) && count($auser)>1) {
                 $nextuser = next($auser);
+            /// Calculate user status
+                $nextuser->status = ($nextuser->timemarked > 0) && ($nextuser->timemarked >= $nextuser->timemodified);
                 $nextid = $nextuser->id;
             }
         }
@@ -1080,41 +1172,142 @@ class assignment_base {
         } elseif ($assignment->assignmenttype == 'uploadsingle') {
             $mformdata->fileui_options = array('subdirs'=>0, 'maxbytes'=>$CFG->userquota, 'maxfiles'=>1, 'accepted_types'=>'*', 'return_types'=>FILE_INTERNAL);
         }
-        $advancedgradingwarning = false;
-        $gradingmanager = get_grading_manager($this->context, 'mod_assignment', 'submission');
-        if ($gradingmethod = $gradingmanager->get_active_method()) {
-            $controller = $gradingmanager->get_controller($gradingmethod);
-            if ($controller->is_form_available()) {
-                $itemid = null;
-                if (!empty($submission->id)) {
-                    $itemid = $submission->id;
-                }
-                if ($gradingdisabled && $itemid) {
-                    $mformdata->advancedgradinginstance = $controller->get_current_instance($USER->id, $itemid);
-                } else if (!$gradingdisabled) {
-                    $instanceid = optional_param('advancedgradinginstanceid', 0, PARAM_INT);
-                    $mformdata->advancedgradinginstance = $controller->get_or_create_instance($instanceid, $USER->id, $itemid);
-                }
-            } else {
-                $advancedgradingwarning = $controller->form_unavailable_notification();
-            }
-        }
 
-        $submitform = new mod_assignment_grading_form( null, $mformdata );
+
+				/* ---------------- Giannis ------------------  */
+				$actionurl = null;
+				if (allow_multiple_markers($assignment->id)) {
+					$actionurl = $PAGE->__get('url');
+				}
+				
+        $submitform = new mod_assignment_grading_form($actionurl, $mformdata); // was $submitform = new mod_assignment_grading_form( null, $mformdata );
+
+				/* -------------------------------------------- */
 
          if (!$display) {
             $ret_data = new stdClass();
             $ret_data->mform = $submitform;
-            if (isset($mformdata->fileui_options)) {
-                $ret_data->fileui_options = $mformdata->fileui_options;
-            }
+            $ret_data->fileui_options = $mformdata->fileui_options;
             return $ret_data;
         }
 
         if ($submitform->is_cancelled()) {
-            redirect('submissions.php?id='.$this->cm->id);
+        	redirect('submissions.php?id='.$this->cm->id);
+
         }
 
+				/* ------------ Giannis ------------------ */
+
+				$mparam = get_markers_param($mformdata->assignment->id);
+				
+				// JavaScript Confirmation Box for submitting the agreed mark
+				if ($mparam != null && $mparam->map->type == 1 && $mparam->behalf == 0) {
+					$individualmap = $DB->get_record('markers_map', array('setupid' => $mparam->map->setupid, 'assignid' => $mparam->map->assignid, 'type' => 0), '*', MUST_EXIST);
+					if ($mparam->confirm == 0 && $individualmap->allowedit == 1) { // notify user that he/she won't be able to further update inidivual mark
+						$assign = $DB->get_record('markers_assign', array('id' => $mparam->map->assignid), '*', MUST_EXIST);
+						$msg = get_string('confirmagreedmark', 'local_markers');
+						
+						// set the parameters
+						$cm = $this->cm->id;
+						$userid = $assign->studentid;
+						$assignid = $assign->id;
+						$raid = $mparam->raid;
+						$rcid = $mparam->rcid;
+						$rsid = $mparam->rsid;
+						$tview = $mparam->tview;
+						
+						$html = "<script type=\"text/javascript\">
+											function confirmMe() {
+												var answer = confirm(\"$msg\");
+												if (answer)
+													conf = 1;
+												else
+													conf = 2;
+
+												window.location = \"submissions.php?id=\" + \"$cm\" + \"&userid=\" + \"$userid\" + \"&mode=single&filter=0&offset=0&type=1\" 
+																					+ \"&assignid=\" + \"$assignid\" + \"&confirm=\" 
+																					+ conf + \"&raid=\" + \"$raid\" + \"&rcid=\" 
+																					+ \"$rcid\" + \"&rsid=\" + \"$rsid\"
+																					+ \"&tview=\" + $tview;
+																																	
+										}
+								
+										window.onload = confirmMe(); 
+									</script>";
+						echo $html;							
+					}
+					else if ($mparam->confirm == 1 && $individualmap->allowedit == 1) { // user agreed to continue so s/he is not able to further edit the individual mark
+						$individualmap->allowedit = 0;
+						$DB->update_record('markers_map', $individualmap);
+					}
+					else if ($mparam->confirm == 2 && $individualmap->allowedit == 1) {// user did not agree to continue
+						// so redirect user back
+        		assignment_markers_redirect($this->course->id, $mparam->behalf, $mparam->rcid, $mparam->raid, $mparam->rsid, $mparam->tview, $this->cm->id);						
+					}
+				}
+
+
+				// Set the data
+				// Check if multiple categories are selected for this assignment
+				
+				if (!is_readable($CFG->dirroot . '/local/cat/locallib.php')) {
+					$cat = null;
+				}
+				else {
+					$cat = $DB->get_record('cat', array ('assignmentid' => $mformdata->assignment->id));
+				}
+				if ($cat != null) { // multiple categories
+					$mformdata->multiplecat = 1;
+					//$categories = $DB->get_records('mycat_category', array ('mycatid' => $catassign->mycatid), 'priority ASC');
+					$categories = $DB->get_records('cat_category', array ('catid' => $cat->id), 'priority ASC');					
+					$num = 0;
+    			foreach ($categories as $c) {
+    				$num++;
+    				$categoryid = 'categoryid' . $num;
+    				$mformdata->$categoryid = $c->id;
+    				$thegrade = 'xgrade' . $num;
+    				$thecomment = 'comment' . $num;
+    				$assess = null;
+    				
+    				if ($mparam != null && $mparam->map->type == 0)
+    					$assess = $DB->get_record('markers_assess', array ('mapid' => $mparam->map->id, 'categoryid' => $c->id));
+    				else {
+    				
+    					if (isset($submission->id)) { // then student has submitted something
+    						$assess = $DB->get_record('cat_submission', array ('categoryid' => $c->id, 'ass_subid' => $submission->id));
+    					}
+    					else { // student has not submitted anything
+    						$assess = null;
+    					}
+    				}
+    				
+    				if ($assess != null) {
+    					$mformdata->$thegrade = $assess->grade;
+    					$mformdata->$thecomment = $assess->feedback;
+   					}
+   					else {
+   						$mformdata->$thegrade = 0;
+   						$mformdata->$thecomment = '';
+   					}
+					}
+				}
+				else { // no multiple categories
+					$mformdata->multiplecat = 0;
+					if ($mparam != null && $mparam->map->type == 0) {
+						$assess = $DB->get_record('markers_assess', array ('mapid' => $mparam->map->id, 'categoryid' => -1));
+						if ($assess != null) {
+							$mformdata->xgrade = $assess->grade;
+							$mformdata->submissioncomment = $assess->feedback;
+						}
+						else {
+   						$mformdata->xgrade = 0;
+   						$mformdata->submissioncomment = '';							
+						}
+					}
+				}
+				
+				/* -------------------------------------- */
+				
         $submitform->set_data($mformdata);
 
         $PAGE->set_title($this->course->fullname . ': ' .get_string('feedback', 'assignment').' - '.fullname($user, true));
@@ -1126,9 +1319,6 @@ class assignment_base {
         echo $OUTPUT->heading(get_string('feedback', 'assignment').': '.fullname($user, true));
 
         // display mform here...
-        if ($advancedgradingwarning) {
-            echo $OUTPUT->notification($advancedgradingwarning, 'error');
-        }
         $submitform->display();
 
         $customfeedback = $this->custom_feedbackform($submission, true);
@@ -1168,6 +1358,7 @@ class assignment_base {
          * to request user_preference updates
          */
 
+
        $filters = array(self::FILTER_ALL             => get_string('all'),
                         self::FILTER_REQUIRE_GRADING => get_string('requiregrading', 'assignment'));
 
@@ -1185,7 +1376,7 @@ class assignment_base {
          * from database
          */
         $perpage    = get_user_preferences('assignment_perpage', 10);
-        $quickgrade = get_user_preferences('assignment_quickgrade', 0) && $this->quickgrade_mode_allowed();
+        $quickgrade = get_user_preferences('assignment_quickgrade', 0);
         $filter = get_user_preferences('assignment_filter', 0);
         $grading_info = grade_get_grades($this->course->id, 'mod', 'assignment', $this->assignment->id);
 
@@ -1224,7 +1415,7 @@ class assignment_base {
         echo '<div class="usersubmissions">';
 
         //hook to allow plagiarism plugins to update status/print links.
-        echo plagiarism_update_status($this->course, $this->cm);
+        plagiarism_update_status($this->course, $this->cm);
 
         $course_context = get_context_instance(CONTEXT_COURSE, $course->id);
         if (has_capability('gradereport/grader:view', $course_context) && has_capability('moodle/grade:viewall', $course_context)) {
@@ -1260,7 +1451,7 @@ class assignment_base {
         }
 
         /// Get all ppl that are allowed to submit assignments
-        list($esql, $params) = get_enrolled_sql($context, 'mod/assignment:submit', $currentgroup);
+        list($esql, $params) = get_enrolled_sql($context, 'mod/assignment:view', $currentgroup);
 
         if ($filter == self::FILTER_ALL) {
             $sql = "SELECT u.id FROM {user} u ".
@@ -1304,29 +1495,58 @@ class assignment_base {
                 $users = array_intersect($users, array_keys($groupingusers));
             }
         }
+        
+				/* ------------- Giannis ----------------- */
+				$allowmarkers = allow_multiple_markers($this->assignment->id);
+				/* --------------------------------------- */        
 
-        $extrafields = get_extra_user_fields($context);
-        $tablecolumns = array_merge(array('picture', 'fullname'), $extrafields,
-                array('grade', 'submissioncomment', 'timemodified', 'timemarked', 'status', 'finalgrade'));
+        //WAS $tablecolumns = array('picture', 'fullname', 'grade', 'submissioncomment', 'timemodified', 'timemarked', 'status', 'finalgrade');
+        /* -------- Giannis ------------- */
+        if ($allowmarkers != null)
+        	$tablecolumns = array('picture', 'fullname', 'grade', 'submissioncomment', 'timemodified', 'timemarked', 'markers', 'status', 'finalgrade');
+        else
+					$tablecolumns = array('picture', 'fullname', 'grade', 'submissioncomment', 'timemodified', 'timemarked', 'status', 'finalgrade');        
+        /* ------------------------------ */
         if ($uses_outcomes) {
             $tablecolumns[] = 'outcome'; // no sorting based on outcomes column
         }
 
-        $extrafieldnames = array();
-        foreach ($extrafields as $field) {
-            $extrafieldnames[] = get_user_field_name($field);
-        }
-        $tableheaders = array_merge(
-                array('', get_string('fullnameuser')),
-                $extrafieldnames,
-                array(
-                    get_string('grade'),
-                    get_string('comment', 'assignment'),
-                    get_string('lastmodified').' ('.get_string('submission', 'assignment').')',
-                    get_string('lastmodified').' ('.get_string('grade').')',
-                    get_string('status'),
-                    get_string('finalgrade', 'grades'),
-                ));
+				/* WAS
+        $tableheaders = array('',
+                              get_string('fullnameuser'),
+                              get_string('grade'),
+                              get_string('comment', 'assignment'),
+                              get_string('lastmodified').' ('.get_string('submission', 'assignment').')',
+                              get_string('lastmodified').' ('.get_string('grade').')',
+                              get_string('status'),
+                              get_string('finalgrade', 'grades')); */
+                              
+       	/* ------------- Giannis -------------------- */
+       	if ($allowmarkers != null) {
+        		$tableheaders = array('',
+          	                    get_string('fullnameuser'),
+          	                    get_string('grade'),
+          	                    get_string('comment', 'assignment'),
+          	                    get_string('lastmodified').' ('.get_string('submission', 'assignment').')',
+          	                    get_string('lastmodified').' ('.get_string('grade').')');
+                              
+         
+         		$tableheaders[] = get_string('tviewMarkers', 'local_markers');
+         		$tableheaders[] = get_string('status');
+         		$tableheaders[] = get_string('finalgrade', 'grades');
+         }
+         else {
+        		$tableheaders = array('',
+            	                  get_string('fullnameuser'),
+            	                  get_string('grade'),
+            	                  get_string('comment', 'assignment'),
+            	                  get_string('lastmodified').' ('.get_string('submission', 'assignment').')',
+            	                  get_string('lastmodified').' ('.get_string('grade').')',
+            	                  get_string('status'),
+            	                  get_string('finalgrade', 'grades'));         
+         }       	
+       	/* ------------------------------------------ */                       
+                              
         if ($uses_outcomes) {
             $tableheaders[] = get_string('outcome', 'grades');
         }
@@ -1347,13 +1567,14 @@ class assignment_base {
 
         $table->column_class('picture', 'picture');
         $table->column_class('fullname', 'fullname');
-        foreach ($extrafields as $field) {
-            $table->column_class($field, $field);
-        }
         $table->column_class('grade', 'grade');
         $table->column_class('submissioncomment', 'comment');
         $table->column_class('timemodified', 'timemodified');
         $table->column_class('timemarked', 'timemarked');
+        /* ------- Giannis ----------- */
+        if ($allowmarkers != null)
+        	$table->column_class('markers', 'markers');
+        /* --------------------------- */
         $table->column_class('status', 'status');
         $table->column_class('finalgrade', 'finalgrade');
         if ($uses_outcomes) {
@@ -1367,6 +1588,19 @@ class assignment_base {
 
         $table->no_sorting('finalgrade');
         $table->no_sorting('outcome');
+        
+        /* -------- Giannis --------- */
+        if ($allowmarkers != null) {
+        	$table->no_sorting('markers');
+        	$table->no_sorting('status');
+        	// apply css style to markers: white-space:nowrap
+        	// this does not allow wrapping of columns
+        	$table->column_style('markers', 'white-space', 'nowrap');
+        	
+        	$table->column_style('status', 'white-space', 'nowrap');        	
+        }
+        /* -------------------------- */
+        
 
         // Start working -- this is necessary as soon as the niceties are over
         $table->setup();
@@ -1390,14 +1624,11 @@ class assignment_base {
             $sort = ' ORDER BY '.$sort;
         }
 
-        $ufields = user_picture::fields('u', $extrafields);
+        $ufields = user_picture::fields('u');
         if (!empty($users)) {
             $select = "SELECT $ufields,
                               s.id AS submissionid, s.grade, s.submissioncomment,
-                              s.timemodified, s.timemarked,
-                              CASE WHEN s.timemarked > 0 AND s.timemarked >= s.timemodified THEN 1
-                                   ELSE 0 END AS status ";
-
+                              s.timemodified, s.timemarked ";
             $sql = 'FROM {user} u '.
                    'LEFT JOIN {assignment_submissions} s ON u.id = s.userid
                     AND s.assignment = '.$this->assignment->id.' '.
@@ -1413,13 +1644,57 @@ class assignment_base {
             $strgrade  = get_string('grade');
             $grademenu = make_grades_menu($this->assignment->grade);
 
+
             if ($ausers !== false) {
                 $grading_info = grade_get_grades($this->course->id, 'mod', 'assignment', $this->assignment->id, array_keys($ausers));
                 $endposition = $offset + $perpage;
                 $currentposition = 0;
+                
+                /* ---------- Giannis ------------- */
+                if ($allowmarkers != null) {
+                	$context = get_context_instance(CONTEXT_COURSE, $this->course->id);
+                	// set the required variables
+                	$teacher = false;
+                	$behalf = 0;
+                	$admin = false;                	
+                	if (has_capability('local/markers:editingteacher', $context)) { // is an editing teacher or admin
+                		$behalf = 1;
+                		$context_user = get_context_instance(CONTEXT_USER, $USER->id);
+                		if (has_capability('local/markers:admin', $context_user)) {
+                			$teacher = false;
+                			$admin = true;
+                		}
+                		else {
+                			$teacher = true;
+                			$admin = false;
+                		}
+                	}               	
+                	
+                }
+                /* -------------------------------- */
+                
+                
                 foreach ($ausers as $auser) {
+                
+                		/* ---------- Giannis --------- */
+                		
+                		if ($allowmarkers != null) {
+                			
+                			$assigns = null;
+											if ($behalf == 1) {// is an editing teacher or admin
+                				$assigns = $DB->get_records('markers_assign', array('courseid' => $this->course->id, 'studentid' => $auser->id));
+                			}                 			
+                			else {// it is a non-editing teacher (marker)
+                				$assigns = $DB->get_records('markers_assign', array('courseid' => $this->course->id, 'studentid' => $auser->id, 'markerid' => $USER->id));
+                			}
+                			
+                			if ($assigns == null) {
+                				continue;
+                			}
+										}      				
+                		/* ---------------------------- */
+                
                     if ($currentposition == $offset && $offset < $endposition) {
-                        $rowclass = null;
                         $final_grade = $grading_info->items[0]->grades[$auser->id];
                         $grademax = $grading_info->items[0]->grademax;
                         $final_grade->formatted_grade = round($final_grade->grade,2) .' / ' . round($grademax,2);
@@ -1428,8 +1703,8 @@ class assignment_base {
                             $locked_overridden = 'overridden';
                         }
 
-                        // TODO add here code if advanced grading grade must be reviewed => $auser->status=0
-
+                    /// Calculate user status
+                        $auser->status = ($auser->timemarked > 0) && ($auser->timemarked >= $auser->timemodified);
                         $picture = $OUTPUT->user_picture($auser);
 
                         if (empty($auser->submissionid)) {
@@ -1442,16 +1717,11 @@ class assignment_base {
                         ///attach file or print link to student answer, depending on the type of the assignment.
                         ///Refer to print_student_answer in inherited classes.
                             if ($auser->timemodified > 0) {
-                                $studentmodifiedcontent = $this->print_student_answer($auser->id)
-                                        . userdate($auser->timemodified);
-                                if ($assignment->timedue && $auser->timemodified > $assignment->timedue) {
-                                    $studentmodifiedcontent .= assignment_display_lateness($auser->timemodified, $assignment->timedue);
-                                    $rowclass = 'late';
-                                }
+                                $studentmodified = '<div id="ts'.$auser->id.'">'.$this->print_student_answer($auser->id)
+                                                 . userdate($auser->timemodified).'</div>';
                             } else {
-                                $studentmodifiedcontent = '&nbsp;';
+                                $studentmodified = '<div id="ts'.$auser->id.'">&nbsp;</div>';
                             }
-                            $studentmodified = html_writer::tag('div', $studentmodifiedcontent, array('id' => 'ts' . $auser->id));
                         ///Print grade, dropdown or text
                             if ($auser->timemarked > 0) {
                                 $teachermodified = '<div id="tt'.$auser->id.'">'.userdate($auser->timemarked).'</div>';
@@ -1464,7 +1734,7 @@ class assignment_base {
                                     $menu = html_writer::select(make_grades_menu($this->assignment->grade), 'menu['.$auser->id.']', $auser->grade, array(-1=>get_string('nograde')), $attributes);
                                     $grade = '<div id="g'.$auser->id.'">'. $menu .'</div>';
                                 } else {
-                                    $grade = '<div id="g'.$auser->id.'">'.$this->display_grade($auser->grade).'</div>';
+                                    $grade = '<div id="g'.$auser->id.'">'.$this->display_grade($auser->grade). '</div>';
                                 }
 
                             } else {
@@ -1525,16 +1795,211 @@ class assignment_base {
                         } else {
                             $auser->status = 1;
                         }
+                        
+                                   
+                                   
+                        /* --------- Giannis ---------- */
+                        if ($allowmarkers != null) {
+                          require_once($CFG->dirroot . '/local/markers/locallib.php');                        		
+                        		
+                        	// Set status
+                        	
+                        	if ($behalf == 1 && $teacher) {
+                        		// find out if teacher is also a marker
+                        		$teachermarker = $DB->get_record('markers_assign', array('courseid' => $course->id, 'studentid' => $auser->id, 'markerid' => $USER->id));
+                        	}
+                        	
+                        	$allmarkers = $DB->get_records('markers_assign', array('courseid' => $this->course->id, 'studentid' => $auser->id));
+                        	$status = '<ul>';
+                        	
 
-                        $buttontext = ($auser->status == 1) ? $strupdate : $strgrade;
+                        	$setup = $allowmarkers;                        	
+                        	
+                        	if ($behalf == 0) {
+                        		$assign = $DB->get_record('markers_assign', array('courseid' => $this->course->id, 'studentid' => $auser->id, 'markerid' => $USER->id), '*', MUST_EXIST);
+                        		$map = $DB->get_record('markers_map', array('setupid' => $setup->id, 'assignid' => $assign->id, 'type' => 0), '*', MUST_EXIST);
+                        		
+                        		// add the grade/update links
+                        		if ($map->allowedit == 1) { // marker can still grade/update
+                        			if ($map->status == 0) {
+                        				$auser->status = 0; // the highlighted link
+                        				$hypertext = get_string('tviewGrade', 'local_markers');
+                        			}
+                        			else {
+                        				$auser->status = 1;
+                        				$hypertext = get_string('tviewUpdate', 'local_markers');                        			
+                        			}
+                        				
+                        			$popup_url = '/mod/assignment/submissions.php?id=' . $this->cm->id . '&userid=' . $auser->id . '&mode=single&filter=0&offset=0'
+                        											. '&assignid=' . $assign->id . '&type=' . $map->type . '&behalf=' . $behalf . '&tview=1';
+                        				
+                        			$hyperlink = $OUTPUT->action_link($popup_url, $hypertext);
+                        			$status .= '<li><div id="up'.$auser->id.'" class="s'.$auser->status.'">'.$hyperlink.'</div>';				 
+                        			
+                        		}
+                        		
 
-                        ///No more buttons, we use popups ;-).
-                        $popup_url = '/mod/assignment/submissions.php?id='.$this->cm->id
-                                   . '&amp;userid='.$auser->id.'&amp;mode=single'.'&amp;filter='.$filter.'&amp;offset='.$offset++;
+														// add further links (if necessary)
+                        		if ($map->status == 1) {
+                        			$alldone = true;
+                        			foreach($allmarkers as $marker) {
+                        				if ($marker->markerid == $USER->id)
+                        					continue;
+                        					
+                        				$thatmap = $DB->get_record('markers_map', array('setupid' => $setup->id, 'assignid' => $marker->id, 'type' => 0), '*', MUST_EXIST);
+                        				if ($thatmap->status == 0) {
+                        					$alldone = false;
+                        				}
+                        			}
+                        			
 
-                        $button = $OUTPUT->action_link($popup_url, $buttontext);
+                        			if (!$alldone) {
+                        				// add awaiting other marks info
+                        				$status .= '<li><font color="#996600">' . get_string('tviewAwaitingOthers', 'local_markers') . '</font>'; // red = "#FF0000"
+                        			}
+                        			else { // all markers submit individual marks
+                        				// so add the agreed links
+                        				$agreedmap = $DB->get_record('markers_map', array('setupid' => $map->setupid, 'assignid' => $map->assignid, 'type' => 1), '*', MUST_EXIST);
+                        				// add the agreed grade/update links
+                       			 		if ($agreedmap->allowedit == 1) { // markers can still grade/update
+                    		    			if ($agreedmap->status == 0) {
+                   			     				$auser->status = 0; // the highlighted link
+                    		    				$hypertext = get_string('tviewAgreedGrade', 'local_markers');
+                    		    			}
+                    		    			else {
+                    		    				$auser->status = 1;
+                    		    				$hypertext = get_string('tviewAgreedUpdate', 'local_markers');                        			
+                    		    			}
+                        				
+                    		    			$popup_url = '/mod/assignment/submissions.php?id=' . $this->cm->id . '&userid=' . $auser->id . '&mode=single&filter=0&offset=0'
+                    		    											. '&assignid=' . $assign->id . '&type=' . $agreedmap->type . '&behalf=' . $behalf . '&tview=1';
+                        				
+                    		    			$hyperlink = $OUTPUT->action_link($popup_url, $hypertext);
+                    		    			$status .= '<li><div id="up'.$auser->id.'" class="s'.$auser->status.'">'.$hyperlink.'</div>';				 
+                    	    			
+                        				}
+                        				
+                        				if ($agreedmap->status == 1) { // add a completed info
+                        					$status .= '<font color="#008000">' . get_string('tviewCompleted', 'local_markers') . '</font>';
+                        				}                        				
+                        			}
+                        		}
+                        	}
+                        	else { // behalf = 1
+                        		
+                        		// add the grade/update links
+                        	
+                        		if ($teacher && $teachermarker != null) { // the teacher is also a marker
+                        			// the first links available will be for this teacher
+                        			$teachermap = $DB->get_record('markers_map', array('setupid' => $setup->id, 'assignid' => $teachermarker->id, 'type' => 0), '*', MUST_EXIST);
+                        			if ($teachermap->status == 0) {
+                   			     		$auser->status = 0; // the highlighted link
+                    		    		$hypertext = get_string('tviewGrade', 'local_markers');                        			
+                        			}
+                        			else {
+                   			     		$auser->status = 1;
+                    		    		$hypertext = get_string('tviewUpdate', 'local_markers');                        			
+                        			}
+                        			
+                    		    	$popup_url = '/mod/assignment/submissions.php?id=' . $this->cm->id . '&userid=' . $auser->id . '&mode=single&filter=0&offset=0'
+                    		    										. '&assignid=' . $teachermarker->id . '&type=' . $teachermap->type . '&behalf=' . $behalf . '&tview=1';
+                        				
+                    		    	$hyperlink = $OUTPUT->action_link($popup_url, $hypertext);
+                    		    	$status .= '<li><div id="up'.$auser->id.'" class="s'.$auser->status.'">'.$hyperlink.'</div>';
+                        		}
+                        		
+                        		$alldone = true;
+                        		foreach ($allmarkers as $marker) {
+                        			if ($teacher && $teachermarker != null && $marker->id == $teachermarker->id)
+                        				continue;
+                        			
+                        			$thatmap = $DB->get_record('markers_map', array('setupid' => $setup->id, 'assignid' => $marker->id, 'type' => 0), '*', MUST_EXIST);
+                        			if ($thatmap->status == 0) {
+                        				$alldone = false;
+                   			     		$auser->status = 0; // the highlighted link
+                    		    		$hypertext = get_string('tviewGrade', 'local_markers');                        			
+                        			}
+                        			else {
+                   			     		$auser->status = 1;
+                    		    		$hypertext = get_string('tviewUpdate', 'local_markers');                        			
+                        			}
+                        			
+                        			$hypertext .= ' ' . get_string('tviewFor', 'local_markers') . ' ' . strip_tags(markers_get_user_url($marker->markerid));
+                    		    	$popup_url = '/mod/assignment/submissions.php?id=' . $this->cm->id . '&userid=' . $auser->id . '&mode=single&filter=0&offset=0'
+                    		    										. '&assignid=' . $marker->id . '&type=' . $thatmap->type . '&behalf=' . $behalf . '&tview=1';
+                    		    										                        			
+                    		    	$hyperlink = $OUTPUT->action_link($popup_url, $hypertext);
+                    		    	$status .= '<li><div id="up'.$auser->id.'" class="s'.$auser->status.'">'.$hyperlink.'</div>';                        			                        				
+                        			
+                        		}
+                        		
+                        		if ($alldone) {
+                        			// add the agreed grade/update links
+                        			if ($teacher && $teachermarker != null) {
+                        				$agreedmap = $DB->get_record('markers_map', array('setupid' => $setup->id, 'assignid' => $teachermarker->id, 'type' => 1), '*', MUST_EXIST);                        		
+                        			}
+                        			else {
+                        				$where = 'courseid = ' . $course->id . ' AND studentid = ' . $auser->id . ' AND role = \'' . get_string('supervisor', 'local_markers') . '\'';  
+																$supervisor = $DB->get_record_select('markers_assign', $where, null, '*', MUST_EXIST);
+																$agreedmap = $DB->get_record('markers_map', array('setupid' => $setup->id, 'assignid' => $supervisor->id, 'type' => 1), '*', MUST_EXIST); 
+                        			}
+                        		
+                        			if ($agreedmap->status == 0) {
+                   			    		$auser->status = 0; // the highlighted link
+                    		    		$hypertext = get_string('tviewAgreedGrade', 'local_markers');
+                    		    	}
+                    		    	else {
+                    		    		$auser->status = 1;
+                    		    		$hypertext = get_string('tviewAgreedUpdate', 'local_markers');                        			
+                    		    	}
+                        				
+                    		    	$popup_url = '/mod/assignment/submissions.php?id=' . $this->cm->id . '&userid=' . $auser->id . '&mode=single&filter=0&offset=0'
+                    		    											. '&assignid=' . $agreedmap->assignid . '&type=' . $agreedmap->type . '&behalf=' . $behalf . '&tview=1';
+                        				
+                    		    	$hyperlink = $OUTPUT->action_link($popup_url, $hypertext);
+                    		    	$status .= '<li><div id="up'.$auser->id.'" class="s'.$auser->status.'">'.$hyperlink.'</div>';
+                            
+                           	 if ($agreedmap->status == 1) { // add a completed info
+                        				$status .= '<font color="#008000">' . get_string('tviewCompleted', 'local_markers') . '</font>';
+                        			}
+                        		}
 
-                        $status  = '<div id="up'.$auser->id.'" class="s'.$auser->status.'">'.$button.'</div>';
+                        	}
+
+                        	
+                        	// add the more icon (inside ul to avoid extra spacing)
+													$pix = $CFG->wwwroot . '/pix/a/em1_raquo.gif';
+													$title = get_string('tviewMore', 'local_markers');
+													$url = $CFG->wwwroot . '/local/markers/view.php?cid=' . $course->id . '&aid=' . $assignment->id . '&sid=' . $auser->id . '&behalf=' . $behalf;
+													$status .= '<style type="text/css">
+																				.more {
+																					position: relative;
+																					right: -50%;
+																				}
+																			</style>';
+																			
+													$status .= '<br/><a class="more" href="' . $url . '"><img src="' . $pix . '" alt="more" style="cursor: pointer" title="' . $title 
+																			. '"/></a>';                        	
+                        	
+                        	$status .= '</ul>'; 
+                        	
+                        	$offset++;
+                        }
+												/* ---------------------------- */
+												else { /* ------- Giannis -------- WAS: without else block*/
+													
+                        	$buttontext = ($auser->status == 1) ? $strupdate : $strgrade;
+                        
+
+                        	///No more buttons, we use popups ;-).
+                        	$popup_url = '/mod/assignment/submissions.php?id='.$this->cm->id
+                                   . '&amp;userid='.$auser->id.'&amp;mode=single'.'&amp;filter='.$filter.'&amp;offset='.$offset++;												
+
+                        	$button = $OUTPUT->action_link($popup_url, $buttontext);
+
+                        	$status  = '<div id="up'.$auser->id.'" class="s'.$auser->status.'">'.$button.'</div>';
+                        } /* --------------------- WAS: without else block*/
+                        
 
                         $finalgrade = '<span id="finalgrade_'.$auser->id.'">'.$final_grade->str_grade.'</span>';
 
@@ -1560,17 +2025,32 @@ class assignment_base {
                         }
 
                         $userlink = '<a href="' . $CFG->wwwroot . '/user/view.php?id=' . $auser->id . '&amp;course=' . $course->id . '">' . fullname($auser, has_capability('moodle/site:viewfullnames', $this->context)) . '</a>';
-                        $extradata = array();
-                        foreach ($extrafields as $field) {
-                            $extradata[] = $auser->{$field};
-                        }
-                        $row = array_merge(array($picture, $userlink), $extradata,
-                                array($grade, $comment, $studentmodified, $teachermodified,
-                                $status, $finalgrade));
+                        
+                        /* ----------- Giannis -------------- */
+                        if ($allowmarkers != null) {
+                        	$markershtml = '<ul>';
+                        	foreach ($allmarkers as $marker) {
+                        		$markershtml .= '<li>' . markers_get_user_url($marker->markerid) . ' (' . $marker->role . ')';
+                        	}
+                        	$markershtml .= '</ul>';
+                        } 
+                        /* ---------------------------------- */
+                        
+                        // WAS $row = array($picture, $userlink, $grade, $comment, $studentmodified, $teachermodified, $status, $finalgrade);
+                        
+                        /* ----------- Giannis -------------- */
+                        if ($allowmarkers != null) {
+													$row = array($picture, $userlink, $grade, $comment, $studentmodified, $teachermodified, $markershtml, $status, $finalgrade);
+												}
+												else {
+													$row = array($picture, $userlink, $grade, $comment, $studentmodified, $teachermodified, $status, $finalgrade);												
+												}
+                        /* ---------------------------------- */                        
+                        
                         if ($uses_outcomes) {
                             $row[] = $outcomes;
                         }
-                        $table->add_data($row, $rowclass);
+                        $table->add_data($row);
                     }
                     $currentposition++;
                 }
@@ -1626,69 +2106,15 @@ class assignment_base {
         $mform->addElement('text', 'perpage', get_string('pagesize', 'assignment'), array('size'=>1));
         $mform->setDefault('perpage', $perpage);
 
-        if ($this->quickgrade_mode_allowed()) {
-            $mform->addElement('checkbox', 'quickgrade', get_string('quickgrade','assignment'));
-            $mform->setDefault('quickgrade', $quickgrade);
-            $mform->addHelpButton('quickgrade', 'quickgrade', 'assignment');
-        }
+        $mform->addElement('checkbox', 'quickgrade', get_string('quickgrade','assignment'));
+        $mform->setDefault('quickgrade', $quickgrade);
+        $mform->addHelpButton('quickgrade', 'quickgrade', 'assignment');
 
         $mform->addElement('submit', 'savepreferences', get_string('savepreferences'));
 
         $mform->display();
 
         echo $OUTPUT->footer();
-    }
-
-    /**
-     * If the form was cancelled ('Cancel' or 'Next' was pressed), call cancel method
-     * from advanced grading (if applicable) and returns true
-     * If the form was submitted, validates it and returns false if validation did not pass.
-     * If validation passes, preprocess advanced grading (if applicable) and returns true.
-     *
-     * Note to the developers: This is NOT the correct way to implement advanced grading
-     * in grading form. The assignment grading was written long time ago and unfortunately
-     * does not fully use the mforms. Usually function is_validated() is called to
-     * validate the form and get_data() is called to get the data from the form.
-     *
-     * Here we have to push the calculated grade to $_POST['xgrade'] because further processing
-     * of the form gets the data not from form->get_data(), but from $_POST (using statement
-     * like  $feedback = data_submitted() )
-     */
-    protected function validate_and_preprocess_feedback() {
-        global $USER, $CFG;
-        require_once($CFG->libdir.'/gradelib.php');
-        if (!($feedback = data_submitted()) || !isset($feedback->userid) || !isset($feedback->offset)) {
-            return true;      // No incoming data, nothing to validate
-        }
-        $userid = required_param('userid', PARAM_INT);
-        $offset = required_param('offset', PARAM_INT);
-        $gradinginfo = grade_get_grades($this->course->id, 'mod', 'assignment', $this->assignment->id, array($userid));
-        $gradingdisabled = $gradinginfo->items[0]->grades[$userid]->locked || $gradinginfo->items[0]->grades[$userid]->overridden;
-        if ($gradingdisabled) {
-            return true;
-        }
-        $submissiondata = $this->display_submission($offset, $userid, false);
-        $mform = $submissiondata->mform;
-        $gradinginstance = $mform->use_advanced_grading();
-        if (optional_param('cancel', false, PARAM_BOOL) || optional_param('next', false, PARAM_BOOL)) {
-            // form was cancelled
-            if ($gradinginstance) {
-                $gradinginstance->cancel();
-            }
-        } else if ($mform->is_submitted()) {
-            // form was submitted (= a submit button other than 'cancel' or 'next' has been clicked)
-            if (!$mform->is_validated()) {
-                return false;
-            }
-            // preprocess advanced grading here
-            if ($gradinginstance) {
-                $data = $mform->get_data();
-                // create submission if it did not exist yet because we need submission->id for storing the grading instance
-                $submission = $this->get_submission($userid, true);
-                $_POST['xgrade'] = $gradinginstance->submit_and_get_grade($data->advancedgrading, $submission->id);
-            }
-        }
-        return true;
     }
 
     /**
@@ -1717,9 +2143,20 @@ class assignment_base {
             $feedback->userid = $feedback->saveuserid;
         }
 
+				/* ---------- Giannis ------------------------- */
+				$mparam = get_markers_param($this->assignment->id);
+				/* -------------------------------------------- */
+
         if (!empty($feedback->cancel)) {          // User hit cancel button
-            return false;
+        		/* ------- Giannis --------- */
+        			if ($mparam != null)
+        				assignment_markers_redirect($this->course->id, $mparam->behalf, $mparam->rcid, $mparam->raid, $mparam->rsid, $mparam->tview, $this->cm->id);
+        		/* ------------------------- */
+            else { /* WAS: only return false (not else)*/
+            	return false;
+            }
         }
+
 
         $grading_info = grade_get_grades($this->course->id, 'mod', 'assignment', $this->assignment->id, $feedback->userid);
 
@@ -1730,8 +2167,7 @@ class assignment_base {
 
         if (!($grading_info->items[0]->grades[$feedback->userid]->locked ||
             $grading_info->items[0]->grades[$feedback->userid]->overridden) ) {
-
-            $submission->grade      = $feedback->xgrade;
+            
             $submission->submissioncomment    = $feedback->submissioncomment_editor['text'];
             $submission->teacher    = $USER->id;
             $mailinfo = get_user_preferences('assignment_mailinfo', 0);
@@ -1749,10 +2185,32 @@ class assignment_base {
                 // $submission->timemodified = time();
             }
 
-            $DB->update_record('assignment_submissions', $submission);
 
-            // triger grade event
-            $this->update_grade($submission);
+            /* -------- Giannis ---------------------------- */
+            // Set the grade
+            $submission = assignment_set_grade($this->assignment, $submission, $feedback);
+            if ($mparam == null || ($mparam != null && $mparam->map->type == 1)) 
+           		assignment_process_multiple_categories($this->assignment, $submission, $feedback);		
+						
+						if ($mparam != null) {
+							if ($mparam->map->allowedit == 0 && $mparam->behalf == 0) { // only if behalf = 0 do not allow edit if needed
+								print_error(get_string('noallowedit', 'local_markers'));
+								die;
+							}
+							assignment_process_multiple_markers($this->assignment, $submission, $feedback, $mparam->map);
+						}
+						
+						assignment_process_multiple_subcategories($this->assignment, $submission, $feedback, $mparam);
+						
+						if ($mparam == null || ($mparam != null && $mparam->map->type == 1)) {
+            	$DB->update_record('assignment_submissions', $submission);
+
+            	// triger grade event
+            	$this->update_grade($submission);
+            
+            }
+						/* --------------------------------------- */
+
 
             add_to_log($this->course->id, 'assignment', 'update grades',
                        'submissions.php?id='.$this->cm->id.'&user='.$feedback->userid, $feedback->userid, $this->cm->id);
@@ -1763,8 +2221,14 @@ class assignment_base {
                     }
              }
         }
-
-        return $submission;
+        
+        /* ------- Giannis --------- */
+       	if ($mparam != null)
+        	assignment_markers_redirect($this->course->id, $mparam->behalf, $mparam->rcid, $mparam->raid, $mparam->rsid, $mparam->tview, $this->cm->id);
+       	/* ------------------------- */
+				else { /* WAS: only return.. */
+        	return $submission;
+        }
 
     }
 
@@ -1827,18 +2291,6 @@ class assignment_base {
     }
 
     /**
-     * Check the given submission is complete. Preliminary rows are often created in the assignment_submissions
-     * table before a submission actually takes place. This function checks to see if the given submission has actually
-     * been submitted.
-     *
-     * @param  stdClass $submission The submission we want to check for completion
-     * @return bool                 Indicates if the submission was found to be complete
-     */
-    public function is_submitted_with_required_data($submission) {
-        return $submission->timemodified;
-    }
-
-    /**
      * Instantiates a new submission object for a given user
      *
      * Sets the assignment, userid and times, everything else is set to default values.
@@ -1882,29 +2334,46 @@ class assignment_base {
     }
 
     /**
-     * Counts all complete (real) assignment submissions by enrolled students
+     * Counts all real assignment submissions by ENROLLED students (not empty ones)
      *
-     * @param  int $groupid (optional) If nonzero then count is restricted to this group
-     * @return int          The number of submissions
+     * @param int $groupid optional If nonzero then count is restricted to this group
+     * @return int The number of submissions
      */
     function count_real_submissions($groupid=0) {
-        global $CFG;
-        global $DB;
-
-        // Grab the context assocated with our course module
-        $context = get_context_instance(CONTEXT_MODULE, $this->cm->id);
-
-        // Get ids of users enrolled in the given course.
-        list($enroledsql, $params) = get_enrolled_sql($context, 'mod/assignment:view', $groupid);
-        $params['assignmentid'] = $this->cm->instance;
-
-        // Get ids of users enrolled in the given course.
-        return $DB->count_records_sql("SELECT COUNT('x')
-                                         FROM {assignment_submissions} s
-                                    LEFT JOIN {assignment} a ON a.id = s.assignment
-                                   INNER JOIN ($enroledsql) u ON u.id = s.userid
-                                        WHERE s.assignment = :assignmentid AND
-                                              s.timemodified > 0", $params);
+        // WAS ONLY: return assignment_count_real_submissions($this->cm, $groupid);
+        /* ----- Giannis -------- */
+        global $DB, $USER, $CFG;
+        
+				if (!is_readable($CFG->dirroot . '/local/markers/locallib.php')) {
+					return assignment_count_real_submissions($this->cm, $groupid);
+				}	      
+        
+        $setup = $DB->get_record('markers_setup', array('assignmentid' => $this->assignment->id));
+        $context = get_context_instance(CONTEXT_COURSE, $this->course->id);
+        $teacher = false;
+        $admin = false;
+        if (has_capability('local/markers:editingteacher', $context)) {
+        	$teacher = true;
+        	$context_user = get_context_instance(CONTEXT_USER, $USER->id);
+        	if (has_capability('local/markers:admin', $context_user)) {
+        		$teacher = false;
+        		$admin = true;
+        	}
+        }
+        if ($setup == null || $teacher || $admin) {
+        	return assignment_count_real_submissions($this->cm, $groupid);
+        }
+        else {
+        	$count = 0;
+        	$assigns = $DB->get_records('markers_assign', array('courseid' => $this->course->id, 'markerid' => $USER->id));
+        	foreach ($assigns as $assign) {
+        		if ($DB->record_exists('assignment_submissions', array('assignment' => $this->assignment->id, 'userid' => $assign->studentid))) {
+        			$count++;
+        		}
+        	}
+        	return $count;
+        }
+        /* ---------------------- */
     }
 
     /**
@@ -1939,7 +2408,7 @@ class assignment_base {
                 $info->username = fullname($user, true);
                 $info->assignment = format_string($this->assignment->name,true);
                 $info->url = $CFG->wwwroot.'/mod/assignment/submissions.php?id='.$this->cm->id;
-                $info->timeupdated = userdate($submission->timemodified, '%c', $teacher->timezone);
+                $info->timeupdated = strftime('%c',$submission->timemodified);
 
                 $postsubject = $strsubmitted.': '.$info->username.' -> '.$this->assignment->name;
                 $posttext = $this->email_teachers_text($info);
@@ -2028,9 +2497,8 @@ class assignment_base {
      * @return string
      */
     function email_teachers_text($info) {
-        $posttext  = format_string($this->course->shortname, true, array('context' => $this->coursecontext)).' -> '.
-                     $this->strassignments.' -> '.
-                     format_string($this->assignment->name, true, array('context' => $this->context))."\n";
+        $posttext  = format_string($this->course->shortname).' -> '.$this->strassignments.' -> '.
+                     format_string($this->assignment->name)."\n";
         $posttext .= '---------------------------------------------------------------------'."\n";
         $posttext .= get_string("emailteachermail", "assignment", $info)."\n";
         $posttext .= "\n---------------------------------------------------------------------\n";
@@ -2046,9 +2514,9 @@ class assignment_base {
     function email_teachers_html($info) {
         global $CFG;
         $posthtml  = '<p><font face="sans-serif">'.
-                     '<a href="'.$CFG->wwwroot.'/course/view.php?id='.$this->course->id.'">'.format_string($this->course->shortname, true, array('context' => $this->coursecontext)).'</a> ->'.
+                     '<a href="'.$CFG->wwwroot.'/course/view.php?id='.$this->course->id.'">'.format_string($this->course->shortname).'</a> ->'.
                      '<a href="'.$CFG->wwwroot.'/mod/assignment/index.php?id='.$this->course->id.'">'.$this->strassignments.'</a> ->'.
-                     '<a href="'.$CFG->wwwroot.'/mod/assignment/view.php?id='.$this->cm->id.'">'.format_string($this->assignment->name, true, array('context' => $this->context)).'</a></font></p>';
+                     '<a href="'.$CFG->wwwroot.'/mod/assignment/view.php?id='.$this->cm->id.'">'.format_string($this->assignment->name).'</a></font></p>';
         $posthtml .= '<hr /><font face="sans-serif">';
         $posthtml .= '<p>'.get_string('emailteachermailhtml', 'assignment', $info).'</p>';
         $posthtml .= '</font><hr />';
@@ -2093,20 +2561,16 @@ class assignment_base {
                 $path = file_encode_url($CFG->wwwroot.'/pluginfile.php', '/'.$this->context->id.'/mod_assignment/submission/'.$submission->id.'/'.$filename);
                 $output .= '<a href="'.$path.'" ><img src="'.$OUTPUT->pix_url(file_mimetype_icon($mimetype)).'" class="icon" alt="'.$mimetype.'" />'.s($filename).'</a>';
                 if ($CFG->enableportfolios && $this->portfolio_exportable() && has_capability('mod/assignment:exportownsubmission', $this->context)) {
-                    $button->set_callback_options('assignment_portfolio_caller', array('id' => $this->cm->id, 'submissionid' => $submission->id, 'fileid' => $file->get_id()), '/mod/assignment/locallib.php');
+                    $button->set_callback_options('assignment_portfolio_caller', array('id' => $this->cm->id, 'fileid' => $file->get_id()), '/mod/assignment/locallib.php');
                     $button->set_format_by_file($file);
                     $output .= $button->to_html(PORTFOLIO_ADD_ICON_LINK);
                 }
-
-                if ($CFG->enableplagiarism) {
-                    require_once($CFG->libdir.'/plagiarismlib.php');
-                    $output .= plagiarism_get_links(array('userid'=>$userid, 'file'=>$file, 'cmid'=>$this->cm->id, 'course'=>$this->course, 'assignment'=>$this->assignment));
-                    $output .= '<br />';
-                }
+                $output .= plagiarism_get_links(array('userid'=>$userid, 'file'=>$file, 'cmid'=>$this->cm->id, 'course'=>$this->course, 'assignment'=>$this->assignment));
+                $output .= '<br />';
             }
             if ($CFG->enableportfolios && count($files) > 1  && $this->portfolio_exportable() && has_capability('mod/assignment:exportownsubmission', $this->context)) {
-                $button->set_callback_options('assignment_portfolio_caller', array('id' => $this->cm->id, 'submissionid' => $submission->id), '/mod/assignment/locallib.php');
-                $output .= '<br />'  . $button->to_html(PORTFOLIO_ADD_TEXT_LINK);
+                $button->set_callback_options('assignment_portfolio_caller', array('id' => $this->cm->id), '/mod/assignment/locallib.php');
+                $output .= '<br />'  . $button->to_html();
             }
         }
 
@@ -2184,6 +2648,12 @@ class assignment_base {
      */
     function user_complete($user, $grade=null) {
         global $OUTPUT;
+        if ($grade) {
+            echo $OUTPUT->container(get_string('grade').': '.$grade->str_long_grade);
+            if ($grade->str_feedback) {
+                echo $OUTPUT->container(get_string('feedback').': '.$grade->str_feedback);
+            }
+        }
 
         if ($submission = $this->get_submission($user->id)) {
 
@@ -2210,12 +2680,6 @@ class assignment_base {
             echo $OUTPUT->box_end();
 
         } else {
-            if ($grade) {
-                echo $OUTPUT->container(get_string('grade').': '.$grade->str_long_grade);
-                if ($grade->str_feedback) {
-                    echo $OUTPUT->container(get_string('feedback').': '.$grade->str_feedback);
-                }
-            }
             print_string("notsubmittedyet", "assignment");
         }
     }
@@ -2254,10 +2718,11 @@ class assignment_base {
      * when printing this activity in a course listing.  See get_array_of_activities() in course/lib.php.
      *
      * @param $coursemodule object The coursemodule object (record).
-     * @return cached_cm_info Object used to customise appearance on course page
+     * @return object An object on information that the courses will know about (most noticeably, an icon).
+     *
      */
     function get_coursemodule_info($coursemodule) {
-        return null;
+        return false;
     }
 
     /**
@@ -2396,16 +2861,10 @@ class assignment_base {
 
 
 class mod_assignment_grading_form extends moodleform {
-    /** @var stores the advaned grading instance (if used in grading) */
-    private $advancegradinginstance;
 
     function definition() {
-        global $OUTPUT;
+        global $OUTPUT, $DB;
         $mform =& $this->_form;
-
-        if (isset($this->_customdata->advancedgradinginstance)) {
-            $this->use_advanced_grading($this->_customdata->advancedgradinginstance);
-        }
 
         $formattr = $mform->getAttributes();
         $formattr['id'] = 'submitform';
@@ -2434,74 +2893,365 @@ class mod_assignment_grading_form extends moodleform {
                                                 fullname($this->_customdata->user, true) . '<br/>' .
                                                 userdate($this->_customdata->submission->timemodified) .
                                                 $this->_customdata->lateness );
+                                                
 
         $this->add_submission_content();
-        $this->add_grades_section();
+        
+        /* ------- Giannis -------------*/
+        $assid = $this->_customdata->assignment->id;
+				global $CFG;
+				if (!is_readable($CFG->dirroot . '/local/cat/locallib.php')) {
+					$cat = null;
+				}
+				else {
+					$cat = $DB->get_record('cat', array ('assignmentid' => $assid)); 
+				}					
+
+        if ($cat == null)
+        	$this->add_grades_section();
+        else
+        	$this->add_multiple_grading_categories($cat);
+        
+        /* ----------------------------- */
 
         $this->add_feedback_section();
+        
+        
+        /* -------- Giannis --------- */
+        $mparam = get_markers_param($this->_customdata->assignment->id);
+        /* -------------------------- */
 
-        if ($this->_customdata->submission->timemarked) {
+
+				/* Giannis: This code has been modified below
+        if ($this->_customdata->submission->timemarked || $mparam != null) {
             $datestring = userdate($this->_customdata->submission->timemarked)."&nbsp; (".format_time(time() - $this->_customdata->submission->timemarked).")";
             $mform->addElement('header', 'Last Grade', get_string('lastgrade', 'assignment'));
             $mform->addElement('static', 'picture', $OUTPUT->user_picture($this->_customdata->teacher) ,
                                                     fullname($this->_customdata->teacher,true).
                                                     '<br/>'.$datestring);
+                                     
+            
+        }
+        /* ------------------------- */
+
+
+				/* -------------- Giannis --------- */
+        if ($this->_customdata->submission->timemarked || $mparam != null) {
+        		if ($mparam == null) {// then is just a final grade
+            $datestring = userdate($this->_customdata->submission->timemarked)."&nbsp; (".format_time(time() - $this->_customdata->submission->timemarked).")";
+            $mform->addElement('header', 'Last Grade', get_string('lastgrade', 'assignment'));
+            $mform->addElement('static', 'picture', $OUTPUT->user_picture($this->_customdata->teacher) ,
+                                                    fullname($this->_customdata->teacher,true).
+                                                    '<br/>'.$datestring);
+            }
+            else{
+            	if ($mparam->map->status == 1) { // if we marked before
+            		$mform->addElement('header', 'Last Grade', get_string('lastgrade', 'assignment'));
+            		$user = $DB->get_record('user', array('id' => $mparam->map->altmarkerid), '*', MUST_EXIST);
+            		if ($this->_customdata->submission->timemarked && $mparam->map->type == 1) {
+            			$html = fullname($user,true);
+            			$html .= '<br/>' . userdate($this->_customdata->submission->timemarked)."&nbsp; (".format_time(time() - $this->_customdata->submission->timemarked).")";
+            		}
+            		else {
+            			$html = '<br/>' . fullname($user,true);
+            		}
+            		
+            		$mform->addElement('static', 'picture', $OUTPUT->user_picture($user) ,
+                                                    $html);
+                                                    
+                if ($mparam->map->endmarkerid == 0) { // the mark was on behalf
+                	if ($mparam->map->type == 1) {
+                		$html = get_string('onbehalfof', 'local_markers') . ' ' . get_string('actualmarkers', 'local_markers');
+                	}
+                	else { // type == 0
+                		$assign = $DB->get_record('markers_assign', array('id' => $mparam->map->assignid), '*', MUST_EXIST);
+                		$marker = $DB->get_record('user', array('id' => $assign->markerid), '*', MUST_EXIST);
+                		$html = get_string('onbehalfof', 'local_markers') . ' ' . $marker->firstname . ' ' . $marker->lastname;
+                	}
+                	$mform->addElement('static', 'onbehalf', '', $html);
+                }            		
+            	}
+            }                                       
+            /* ------------------------- */
         }
         // buttons
         $this->add_action_buttons();
 
     }
+    
+		/* ------------- Giannis ------------------ */
+		function get_subcategories_table($categoryid, $assignmentid, $submissionid) {
+			global $DB, $CFG;
+			
+			if (!is_readable($CFG->dirroot . '/local/cat/locallib.php')) {
+				return null;
+			}				
+			
+			$mparam = get_markers_param($assignmentid);
+			
+			$subcategories = $DB->get_records('cat_subcat', array('categoryid' => $categoryid));
+			if ($subcategories == null)
+				return null;			
+			
+			$category = $DB->get_record('cat_category', array('id' => $categoryid), '*', MUST_EXIST);
+			$cat = $DB->get_record('cat', array('id' => $category->catid), '*', MUST_EXIST);
+			if ($cat->rankid == 0) {
+				//$default = $DB->get_records('cat_rank', array('name' => get_string('rank_default', 'local_cat'), 'nextpriority' => 7, 'courseid' => 0));
+				$sql = 'SELECT * FROM ' . $CFG->prefix . 'cat_rank WHERE name="' . get_string('rank_default', 'local_cat') . '" AND nextpriority = 7 AND courseid = 0'; 
+				$default = $DB->get_records_sql($sql);
+				if ($default != null) {
+					$rank = reset($default);
+					$rankid = $rank->id;
+				} else {
+					$rankid = set_default_ranks();
+				}
+				$cat->rankid = $rankid;
+				$DB->update_record('cat', $cat);
+				 
+			}
+			$ranks = $DB->get_records('cat_ranks', array('rankid' => $cat->rankid));
+			// css
+			$html = '<style type="text/css">
+			
+								table.subtable {
+									position: relative;
+									right: -10%;
+								}
+								
+								table.subtable td.special {	
+									border-left: 1px solid #0000FF;
+									border-top: 1px solid #0000FF;
+									border-bottom: 1px solid #0000FF;
+									border-right: 1px solid #0000FF;
+									cursor: pointer;
+								}
+							</style>';
+							
+			// javascript
+			$html .= '<script type="text/javascript">
+														
+									function choose(i) {
+									
+										var input = i.getElementsByTagName("input")[0];
+										var tick = i.getElementsByTagName("img")[0];
 
-    /**
-     * Gets or sets the instance for advanced grading
-     *
-     * @param gradingform_instance $gradinginstance
-     */
-    public function use_advanced_grading($gradinginstance = false) {
-        if ($gradinginstance !== false) {
-            $this->advancegradinginstance = $gradinginstance;
-        }
-        return $this->advancegradinginstance;
-    }
 
-    /**
-     * Add the grades configuration section to the assignment configuration form
-     */
-    function add_grades_section() {
-        global $CFG;
-        $mform =& $this->_form;
+										if (input.value == 0) {
+											input.value = 1;
+											i.style.backgroundColor = "#FFFF00";
+											tick.style.visibility = "visible";
+										}
+										else {
+											input.value = 0;
+											i.style.backgroundColor = "#FFFFFF";
+											tick.style.visibility = "hidden";											
+										}
+	
+									}
+			
+							  </script>';
+			
+			$html .= '<br/>'; // add some space before the table
+														
+			$html .= '<table class="subtable">';
+			$html .= '<tr>';
+			$html .= '<td></td>'; // the blank cell
+			foreach ($ranks as $r) {
+				$html .= '<td>';
+				$html .= '<b>' . $r->description . '</b>';
+				$html .= '</td>';
+			}
+			$html .= '</tr>';	
+			foreach ($subcategories as $subcat) {
+				$html .= '<tr>';
+				$html .= '<td>';
+				$html .= '<b>' . $subcat->description . '</b>';
+				$html .= '</td>';
+				foreach ($ranks as $r) {
+					$value = 0;
+					$color = "#FFFFFF"; // white
+					$visibility = "hidden";
+					
+					$exists = false;
+					if ($mparam != null && $mparam->map->type == 0) { // then we have multiple markers and individual marking
+						$exists = $DB->record_exists('markers_subassess', array('mapid' => $mparam->map->id, 'subcatid' => $subcat->id, 'ranksid' => $r->id));
+					}
+					else { // either no multiple markers or multiple markers but an agreed mark
+						$exists = $DB->record_exists('cat_subcat_submission', array('ass_subid' => $submissionid, 'subcatid' => $subcat->id, 'ranksid' => $r->id));						
+					} 
+
+					if ($exists) {
+						$value = 1;
+						$color = "#FFFF00";
+						$visibility = "visible";
+					}
+								
+					$html .= '<td bgcolor=' . $color . ' class="special" onclick="choose(this)">';
+					$name = $subcat->id . '-' . $r->id; 
+					//$html .= '<input type="hidden" name="' . $name . '" value="' . $value . '"/>'; // using a hidden field: Reset does not work on them
+					//$html .= '<output name="' . $name . '" style="visibility: visible" size="2">' . $value . '</output>'; // using an output text field CANNOT SUBMIT IT					
+					$html .= '<input type="text" name="' . $name . '" value="' . $value . '" style="visibility: hidden; position: absolute" size="2"/>'; // using a text field
+
+
+					// add the tick symbol
+					$url = $CFG->wwwroot . '/pix/i/tick_green_big.gif';
+					$html .= '<center>';
+					$html .= '<img src="' . $url . '" style="cursor: pointer; visibility: ' . $visibility . '"/>';
+					$html .= '</center>';
+											
+					$html .= '</td>';						
+				}
+				
+				$html .= '</tr>';
+				
+			}
+			
+			$html .= '</table>';
+			
+			$html .= '</br>'; // add some space after the table
+			
+			return $html;	
+			
+		}
+		/* ---------------------------------------- */    
+    
+    /* ------------ Giannis ------------------- */
+    
+    function add_multiple_grading_categories($tcat, $assignmentid=null, $submissionid=null) {
+    	global $DB, $CFG;
+    	$mform =& $this->_form;
+    	
+			if (!is_readable($CFG->dirroot . '/local/cat/locallib.php')) {
+				return;
+			}	
+
+    	$mform->addElement('hidden', 'multiplecat', 1);
+    	
+    	if ($tcat == null) {
+    		print_error('Unexpected error: Cat is null');
+    		die;
+    	}
+    	$categories = $DB->get_records('cat_category', array ('catid' => $tcat->id), 'priority ASC');
+    	$num = 0;
+    	foreach ($categories as $cat) {
+    		
+    		$description = $cat->description;
+    		$maxgrade = $cat->maxgrade;
+    		$categoryid = $cat->id;
+    		$weight = round($cat->weight, 2);
+    		
+    		/*
+    		$description = null;
+    		$maxgrade = null;
+    		$categoryid = null; */
+    		
+    		/*  	
+    		foreach ($cat as $field => $value) {
+    			if ($field == 'id')
+    				$categoryid = $value;
+    			else if ($field == 'description')
+    				$description = $value;
+    			else if ($field == 'maxgrade')
+    				$maxgrade = $value; 
+    		}
+    		if ($description == null || $maxgrade == null || $categoryid == null) {
+    			print_error('Unexpected error: either description or maxgrade or categoryid is null');
+    			die;
+    		} */
+    		
+    		$num++;
+    		$mform->addElement('header', 'forcategory', get_string('forcategory', 'local_cat') . ' ' . $num . ': ' . $description . ' (' . get_string('theweight', 'local_cat') . ': ' . $weight . ')');
+    		$mform->addElement('hidden', 'categoryid' . $num);
+    		$mform->setDefault('categoryid' . $num, $categoryid);
         $attributes = array();
         if ($this->_customdata->gradingdisabled) {
             $attributes['disabled'] ='disabled';
         }
 
-        $mform->addElement('header', 'Grades', get_string('grades', 'grades'));
+				$roundedmaxgrade = round($maxgrade, 2);
+        $grademenu = make_grades_menu($roundedmaxgrade);
+        
+        $mparam = get_markers_param($this->_customdata->assignment->id);
+        if ($mparam != null && $mparam->map->type == 1) {
+        	$html = assignment_get_mark_table($mparam->map, $categoryid);
+        	$mform->addElement('html', $html);
+        }
+
+				// Grade field
+        $mform->addElement('select', 'xgrade' . $num, get_string('grade').':', $grademenu, $attributes);
+        $mform->setDefault('xgrade' . $num, 0);
+        $mform->setType('xgrade' . $num, PARAM_INT);
+        
+				// add subcategories table
+				if (isset($this->_customdata->submission->id))
+					$html = $this->get_subcategories_table($categoryid, $this->_customdata->assignment->id, $this->_customdata->submission->id);
+				else
+					$html = $this->get_subcategories_table($categoryid, $this->_customdata->assignment->id, -1);
+										
+				if ($html != null) {
+					$mform->addElement('html', $html);
+				}
+				        
+        
+        // Comment field
+        $mform->addElement('textarea', 'comment' . $num, get_string('comment', 'local_cat'), 'wrap="virtual" rows="3" cols="50"');
+
+    	}
+    	
+    	
+    	// A function to reset all the form elements on loading/reloading
+    	// This is essential for the subcategories table to work correctly
+			$html = '<script type="text/javascript">
+								function reset() {
+									var form = document.getElementsByTagName("form")[0];
+									form.reset();
+								}
+			
+								window.onload = reset();
+							 </script>';
+			$mform->addElement('html', $html);
+    	
+    }
+    
+    /* ---------------------------------------- */
+
+    function add_grades_section() {
+        global $CFG;
+        $mform =& $this->_form;
+        
+        /* --------- Giannis ---------------- */
+        //$mform->setDefault('multiplecat', 0);
+        $mform->addElement('hidden', 'multiplecat', 0);
+        /* -------------------------------- */
+        
+        $attributes = array();
+        if ($this->_customdata->gradingdisabled) {
+            $attributes['disabled'] ='disabled';
+        }
 
         $grademenu = make_grades_menu($this->_customdata->assignment->grade);
-        if ($gradinginstance = $this->use_advanced_grading()) {
-            $gradinginstance->get_controller()->set_grade_range($grademenu);
-            $gradingelement = $mform->addElement('grading', 'advancedgrading', get_string('grade').':', array('gradinginstance' => $gradinginstance));
-            if ($this->_customdata->gradingdisabled) {
-                $gradingelement->freeze();
-            } else {
-                $mform->addElement('hidden', 'advancedgradinginstanceid', $gradinginstance->get_id());
-            }
-        } else {
-            // use simple direct grading
-            $grademenu['-1'] = get_string('nograde');
+        $grademenu['-1'] = get_string('nograde');
 
-            $mform->addElement('select', 'xgrade', get_string('grade').':', $grademenu, $attributes);
-            $mform->setDefault('xgrade', $this->_customdata->submission->grade ); //@fixme some bug when element called 'grade' makes it break
-            $mform->setType('xgrade', PARAM_INT);
+        $mform->addElement('header', 'Grades', get_string('grades', 'grades'));
+        
+        /* ------------------- Giannis -------------------------------------- */
+        $mparam = get_markers_param($this->_customdata->assignment->id);
+        if ($mparam != null && $mparam->map->type == 1) {
+        	$html = assignment_get_mark_table($mparam->map, -1);
+        	$mform->addElement('html', $html);
         }
+        /* ------------------------------------------------------------------ */
+        
+        $mform->addElement('select', 'xgrade', get_string('grade').':', $grademenu, $attributes);
+        $mform->setDefault('xgrade', $this->_customdata->submission->grade ); //@fixme some bug when element called 'grade' makes it break
+        $mform->setType('xgrade', PARAM_INT);
 
         if (!empty($this->_customdata->enableoutcomes)) {
             foreach($this->_customdata->grading_info->outcomes as $n=>$outcome) {
                 $options = make_grades_menu(-$outcome->scaleid);
                 if ($outcome->grades[$this->_customdata->submission->userid]->locked) {
                     $options[0] = get_string('nooutcome', 'grades');
-                    $mform->addElement('static', 'outcome_'.$n.'['.$this->_customdata->userid.']', $outcome->name.':',
-                            $options[$outcome->grades[$this->_customdata->submission->userid]->grade]);
+                    echo $options[$outcome->grades[$this->_customdata->submission->userid]->grade];
                 } else {
                     $options[''] = get_string('nooutcome', 'grades');
                     $attributes = array('id' => 'menuoutcome_'.$n );
@@ -2527,7 +3277,7 @@ class mod_assignment_grading_form extends moodleform {
      * @global core_renderer $OUTPUT
      */
     function add_feedback_section() {
-        global $OUTPUT;
+        global $OUTPUT, $DB;
         $mform =& $this->_form;
         $mform->addElement('header', 'Feed Back', get_string('feedback', 'grades'));
 
@@ -2535,10 +3285,126 @@ class mod_assignment_grading_form extends moodleform {
             $mform->addElement('static', 'disabledfeedback', $this->_customdata->grading_info->items[0]->grades[$this->_customdata->userid]->str_feedback );
         } else {
             // visible elements
+            
+            /* -------- Giannis ---------- */
+            $mparam = get_markers_param($this->_customdata->assignment->id);
+            $cat = allow_multiple_categories($this->_customdata->assignment->id);
+            if ($mparam != null && $mparam->map->type == 1 && $cat != null) {
+            	// we should show the general feedback of each marker
+						$html ="<style>
+											#mmymarks {
+												width: 53%;
+												margin: 0px auto;
+												border-collapse: collapse;
+												border: 1px solid #000000;
+												position: relative;
+												right: -16%;
+ 											}
+						
+											#mmymarks .rowa {
+												background: #BFC7FF;
+												height: 20px;
+												text-align:center;
+											}
+						
+											#mmymarks .rowb {
+												background: #D9F9FC;
+												height: 20px;
+												text-align:center;
+											}
+						
+											#mmymarks .cell {
+												padding: 0px;
+												border: 1px solid #000000;
+											}
+						
+											#mmymarks .titles {
+												background: #E5E5E5;
+												height: 20px;
+												font-weight:bold;
+												text-align:center;
+											}
+						
+											table.ttable td.textcell {
+												#width: 10%;
+											}
+							
+						
+											table.ttable td {
+												border-top: 1px solid #000000;
+												border-bottom: 1px solid #000000;
+												#border-left: 1px solid #000000;
+												#border-right: 1px solid #000000;
+												white-space: nowrap;
+											}
+						
+											table.ttable td.commentcell {
+												white-space: normal;
+											}
+
+						
+										</style>";
+	
+							$html .= "<table class=\"ttable\" id=\"mmymarks\" cellspacing=\"0\" cellpadding=\"0\" align=\"left\">";
+							$html .= "<tr class=\"titles\">";
+							$html .= "<td>" . get_string('sMarker', 'local_markers') . "</td>";
+							$html .= "<td>" . get_string('sRole', 'local_markers') . "</td>";
+							$html .= "<td>" . get_string('sFeedback', 'local_markers') . "</td>";
+							$html .= '</tr>';					            	
+            	$assign = $DB->get_record('markers_assign', array('id' => $mparam->map->assignid), '*', MUST_EXIST);
+            	$assigns = $DB->get_records('markers_assign', array('courseid' => $assign->courseid, 'studentid' => $assign->studentid));
+            	$classname = "rowa";
+            	foreach ($assigns as $marker) {
+            		$tmap = $DB->get_record('markers_map', array('setupid' => $mparam->map->setupid, 'assignid' => $marker->id, 'type' => 0), '*', MUST_EXIST);
+            		$assess = $DB->get_record('markers_assess', array('mapid' => $tmap->id, 'categoryid' => -1));
+            		$html .= "<tr class=" . $classname .">";
+            		$user = $DB->get_record('user', array('id' => $marker->markerid), '*', MUST_EXIST);
+            		$html .= "<td class='textcell'>" . $user->firstname . " " . $user->lastname ."</td>";
+            		$html .= "<td class='textcell'>" . $marker->role ."</td>";            		
+            		if ($assess != null) {
+									$feedback = $assess->feedback;
+            		}
+            		else {
+            			$feedback = '';
+            		}
+            		$feedback = (strlen($feedback) > 200) ? substr($feedback,0,200).'...' : $feedback;
+            		$html .= "<td class='commentcell'>" . $feedback ."</td>";
+            		$html .= "</tr>";
+            		$classname = "rowa" ? "rowb" : "rowa";
+            	}
+              $html .= "</table>";
+            	$mform->addElement('html', $html);  
+            }       
+            /* --------------------------- */
 
             $mform->addElement('editor', 'submissioncomment_editor', get_string('feedback', 'assignment').':', null, $this->get_editor_options() );
-            $mform->setType('submissioncomment_editor', PARAM_RAW); // to be cleaned before display
+            $mform->setType('submissioncomment_editor', PARAM_RAW); // to be cleaned before display            
             $mform->setDefault('submissioncomment_editor', $this->_customdata->submission->submissioncomment);
+            
+            /* ------------ Giannis ----------------- */
+        		if ($mparam != null && $mparam->map->type == 0) {
+        			$assess = $DB->get_record('markers_assess', array ('mapid' => $mparam->map->id, 'categoryid' => -1));
+        			
+        			if ($assess == null) {
+        				$assess = new stdClass();
+        				$assess->feedback = '';
+        			}
+        			
+            	$html = '<script type="text/javascript">
+            								
+            							function fixFeedback(comment) {
+            								var editor = document.getElementsByName("submissioncomment_editor[text]")[0];
+            								editor.value = comment;
+            									
+            							}
+            		
+            						 	window.onload = fixFeedback("' . $assess->feedback . '");
+            						</script>';
+            	$mform->addElement('html', $html);
+        			
+        		}            
+            /* -------------------------------------- */
+            
             //$mform->addRule('submissioncomment', get_string('required'), 'required', null, 'client');
             switch ($this->_customdata->assignment->assignmenttype) {
                 case 'upload' :
@@ -2558,8 +3424,16 @@ class mod_assignment_grading_form extends moodleform {
 
     function add_action_buttons() {
         $mform =& $this->_form;
+        
+        /* ------------------ Giannis ------------------------ */
+        if (allow_multiple_markers($this->_customdata->assignment->id) != null) {
+        	  $buttonarray=array();
+            $buttonarray[] = &$mform->createElement('submit', 'submitbutton', get_string('submitmark', 'local_markers'));
+            $buttonarray[] = &$mform->createElement('cancel');
+        }
+        /* --------------------------------------------------- */
         //if there are more to be graded.
-        if ($this->_customdata->nextid>0) {
+        else if ($this->_customdata->nextid>0) { /* -------- Giannis --------- WAS: if ($this->_customdata->nextid>0) */
             $buttonarray=array();
             $buttonarray[] = &$mform->createElement('submit', 'submitbutton', get_string('savechanges'));
             //@todo: fix accessibility: javascript dependency not necessary
@@ -2589,7 +3463,6 @@ class mod_assignment_grading_form extends moodleform {
         $editoroptions['noclean'] = false;
         $editoroptions['maxfiles'] = 0; //TODO: no files for now, we need to first implement assignment_feedback area, integration with gradebook, files support in quickgrading, etc. (skodak)
         $editoroptions['maxbytes'] = $this->_customdata->maxbytes;
-        $editoroptions['context'] = $this->_customdata->context;
         return $editoroptions;
     }
 
@@ -2619,7 +3492,8 @@ class mod_assignment_grading_form extends moodleform {
                     break;
         }
 
-        $data = file_prepare_standard_editor($data, 'submissioncomment', $editoroptions, $this->_customdata->context, $editoroptions['component'], $editoroptions['filearea'], $itemid);
+        $data = file_prepare_standard_editor($data, 'submissioncomment', $editoroptions, $this->_customdata->context, $editoroptions['component'], $editoroptions['filearea'], $itemid);        
+        
         return parent::set_data($data);
     }
 
@@ -2644,11 +3518,6 @@ class mod_assignment_grading_form extends moodleform {
             }
             $data = file_postupdate_standard_editor($data, 'submissioncomment', $editoroptions, $this->_customdata->context, $editoroptions['component'], $editoroptions['filearea'], $itemid);
         }
-
-        if ($this->use_advanced_grading() && !isset($data->advancedgrading)) {
-            $data->advancedgrading = null;
-        }
-
         return $data;
     }
 }
@@ -2691,11 +3560,12 @@ function assignment_delete_instance($id){
 function assignment_update_instance($assignment){
     global $CFG;
 
-    $assignment->assignmenttype = clean_param($assignment->assignmenttype, PARAM_PLUGIN);
+    $assignment->assignmenttype = clean_param($assignment->assignmenttype, PARAM_SAFEDIR);
 
     require_once("$CFG->dirroot/mod/assignment/type/$assignment->assignmenttype/assignment.class.php");
     $assignmentclass = "assignment_$assignment->assignmenttype";
-    $ass = new $assignmentclass();
+    $ass = new $assignmentclass(); 
+    
     return $ass->update_instance($assignment);
 }
 
@@ -2708,11 +3578,12 @@ function assignment_update_instance($assignment){
 function assignment_add_instance($assignment) {
     global $CFG;
 
-    $assignment->assignmenttype = clean_param($assignment->assignmenttype, PARAM_PLUGIN);
+    $assignment->assignmenttype = clean_param($assignment->assignmenttype, PARAM_SAFEDIR);
 
     require_once("$CFG->dirroot/mod/assignment/type/$assignment->assignmenttype/assignment.class.php");
     $assignmentclass = "assignment_$assignment->assignmenttype";
     $ass = new $assignmentclass();
+
     return $ass->add_instance($assignment);
 }
 
@@ -2812,10 +3683,8 @@ function assignment_cron () {
             /// mail is customised for the receiver.
             cron_setup_user($user, $course);
 
-            $coursecontext = get_context_instance(CONTEXT_COURSE, $submission->course);
-            $courseshortname = format_string($course->shortname, true, array('context' => $coursecontext));
-            if (!is_enrolled($coursecontext, $user->id)) {
-                echo fullname($user)." not an active participant in " . $courseshortname . "\n";
+            if (!is_enrolled(get_context_instance(CONTEXT_COURSE, $submission->course), $user->id)) {
+                echo fullname($user)." not an active participant in " . format_string($course->shortname) . "\n";
                 continue;
             }
 
@@ -2841,15 +3710,15 @@ function assignment_cron () {
             $assignmentinfo->assignment = format_string($submission->name,true);
             $assignmentinfo->url = "$CFG->wwwroot/mod/assignment/view.php?id=$mod->id";
 
-            $postsubject = "$courseshortname: $strassignments: ".format_string($submission->name,true);
-            $posttext  = "$courseshortname -> $strassignments -> ".format_string($submission->name,true)."\n";
+            $postsubject = "$course->shortname: $strassignments: ".format_string($submission->name,true);
+            $posttext  = "$course->shortname -> $strassignments -> ".format_string($submission->name,true)."\n";
             $posttext .= "---------------------------------------------------------------------\n";
             $posttext .= get_string("assignmentmail", "assignment", $assignmentinfo)."\n";
             $posttext .= "---------------------------------------------------------------------\n";
 
             if ($user->mailformat == 1) {  // HTML
                 $posthtml = "<p><font face=\"sans-serif\">".
-                "<a href=\"$CFG->wwwroot/course/view.php?id=$course->id\">$courseshortname</a> ->".
+                "<a href=\"$CFG->wwwroot/course/view.php?id=$course->id\">$course->shortname</a> ->".
                 "<a href=\"$CFG->wwwroot/mod/assignment/index.php?id=$course->id\">$strassignments</a> ->".
                 "<a href=\"$CFG->wwwroot/mod/assignment/view.php?id=$mod->id\">".format_string($submission->name,true)."</a></font></p>";
                 $posthtml .= "<hr /><font face=\"sans-serif\">";
@@ -2887,9 +3756,9 @@ function assignment_cron () {
 /**
  * Return grade for given user or all users.
  *
- * @param stdClass $assignment An assignment instance
- * @param int $userid Optional user id, 0 means all users
- * @return array An array of grades, false if none
+ * @param int $assignmentid id of assignment
+ * @param int $userid optional user id, 0 means all users
+ * @return array array of grades, false if none
  */
 function assignment_get_user_grades($assignment, $userid=0) {
     global $CFG, $DB;
@@ -2914,10 +3783,8 @@ function assignment_get_user_grades($assignment, $userid=0) {
 /**
  * Update activity grades
  *
- * @category grade
- * @param stdClass $assignment Assignment instance
+ * @param object $assignment
  * @param int $userid specific user only, 0 means all
- * @param bool $nullifnone Not used
  */
 function assignment_update_grades($assignment, $userid=0, $nullifnone=true) {
     global $CFG, $DB;
@@ -2972,9 +3839,8 @@ function assignment_upgrade_grades() {
 /**
  * Create grade item for given assignment
  *
- * @category grade
- * @param stdClass $assignment An assignment instance with extra cmidnumber property
- * @param mixed $grades Optional array/object of grade(s); 'reset' means reset grades in gradebook
+ * @param object $assignment object with extra cmidnumber
+ * @param mixed optional array/object of grade(s); 'reset' means reset grades in gradebook
  * @return int 0 if ok, error code otherwise
  */
 function assignment_grade_item_update($assignment, $grades=NULL) {
@@ -3011,7 +3877,6 @@ function assignment_grade_item_update($assignment, $grades=NULL) {
 /**
  * Delete grade item for given assignment
  *
- * @category grade
  * @param object $assignment object
  * @return object assignment
  */
@@ -3063,14 +3928,12 @@ function assignment_get_participants($assignmentid) {
 /**
  * Serves assignment submissions and other files.
  *
- * @package  mod_assignment
- * @category files
- * @param stdClass $course course object
- * @param stdClass $cm course module object
- * @param stdClass $context context object
- * @param string $filearea file area
- * @param array $args extra arguments
- * @param bool $forcedownload whether or not force download
+ * @param object $course
+ * @param object $cm
+ * @param object $context
+ * @param string $filearea
+ * @param array $args
+ * @param bool $forcedownload
  * @return bool false if file not found, does not return if found - just send the file
  */
 function assignment_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload) {
@@ -3490,37 +4353,43 @@ function assignment_get_unmailed_submissions($starttime, $endtime) {
 }
 
 /**
- * Counts all complete (real) assignment submissions by enrolled students for the given course modeule.
+ * Counts all real assignment submissions by ENROLLED students (not empty ones)
  *
- * @deprecated                         Since Moodle 2.2 MDL-abc - Please do not use this function any more.
- * @param  cm_info $cm                 The course module that we wish to perform the count on.
- * @param  int     $groupid (optional) If nonzero then count is restricted to this group
- * @return int                         The number of submissions
+ * There are also assignment type methods count_real_submissions() which in the default
+ * implementation simply call this function.
+ * @param $groupid int optional If nonzero then count is restricted to this group
+ * @return int The number of submissions
  */
 function assignment_count_real_submissions($cm, $groupid=0) {
     global $CFG, $DB;
 
-    // Grab the assignment type for the given course module
-    $assignmenttype = $DB->get_field($cm->modname, 'assignmenttype', array('id' => $cm->instance), MUST_EXIST);
+    $context = get_context_instance(CONTEXT_MODULE, $cm->id);
 
-    // Create the expected class file path and class name for the returned assignemnt type
-    $filename = "{$CFG->dirroot}/mod/assignment/type/{$assignmenttype}/assignment.class.php";
-    $classname = "assignment_{$assignmenttype}";
-
-    // If the file exists and the class is not already loaded we require the class file
-    if (file_exists($filename) && !class_exists($classname)) {
-        require_once($filename);
+    // this is all the users with this capability set, in this context or higher
+    if ($users = get_enrolled_users($context, 'mod/assignment:view', $groupid, 'u.id')) {
+        $users = array_keys($users);
     }
-    // If the required class is still not loaded then we revert to assignment base
-    if (!class_exists($classname)) {
-        $classname = 'assignment_base';
-    }
-    $instance = new $classname;
 
-    // Attach the course module to the assignment type instance and then call the method for counting submissions
-    $instance->cm = $cm;
-    return $instance->count_real_submissions($groupid);
+    // if groupmembersonly used, remove users who are not in any group
+    if ($users and !empty($CFG->enablegroupmembersonly) and $cm->groupmembersonly) {
+        if ($groupingusers = groups_get_grouping_members($cm->groupingid, 'u.id', 'u.id')) {
+            $users = array_intersect($users, array_keys($groupingusers));
+        }
+    }
+
+    if (empty($users)) {
+        return 0;
+    }
+
+    $userlists = implode(',', $users);
+
+    return $DB->count_records_sql("SELECT COUNT('x')
+                                     FROM {assignment_submissions}
+                                    WHERE assignment = ? AND
+                                          timemodified > 0 AND
+                                          userid IN ($userlists)", array($cm->instance));
 }
+
 
 /**
  * Return all assignment submissions by ENROLLED students (even empty)
@@ -3565,13 +4434,13 @@ function assignment_get_all_submissions($assignment, $sort="", $dir="DESC") {
  * when printing this activity in a course listing.  See get_array_of_activities() in course/lib.php.
  *
  * @param $coursemodule object The coursemodule object (record).
- * @return cached_cm_info An object on information that the courses will know about (most noticeably, an icon).
+ * @return object An object on information that the courses will know about (most noticeably, an icon).
+ *
  */
 function assignment_get_coursemodule_info($coursemodule) {
     global $CFG, $DB;
 
-    if (! $assignment = $DB->get_record('assignment', array('id'=>$coursemodule->instance),
-            'id, assignmenttype, name, intro, introformat')) {
+    if (! $assignment = $DB->get_record('assignment', array('id'=>$coursemodule->instance), 'id, assignmenttype, name')) {
         return false;
     }
 
@@ -3581,15 +4450,14 @@ function assignment_get_coursemodule_info($coursemodule) {
         require_once($libfile);
         $assignmentclass = "assignment_$assignment->assignmenttype";
         $ass = new $assignmentclass('staticonly');
-        if (!($result = $ass->get_coursemodule_info($coursemodule))) {
-            $result = new cached_cm_info();
-            $result->name = $assignment->name;
+        if ($result = $ass->get_coursemodule_info($coursemodule)) {
+            return $result;
+        } else {
+            $info = new stdClass();
+            $info->name = $assignment->name;
+            return $info;
         }
-        if ($coursemodule->showdescription) {
-            // Convert intro to html. Do not filter cached version, filters run at display time.
-            $result->content = format_module_intro('assignment', $assignment, $coursemodule->id, false);
-        }
-        return $result;
+
     } else {
         debugging('Incorrect assignment type: '.$assignment->assignmenttype);
         return false;
@@ -3811,9 +4679,8 @@ function assignment_get_types() {
 
 /**
  * Removes all grades from gradebook
- *
- * @param int $courseid The ID of the course to reset
- * @param string $type Optional type of assignment to limit the reset to a particular assignment type
+ * @param int $courseid
+ * @param string optional type
  */
 function assignment_reset_gradebook($courseid, $type='') {
     global $CFG, $DB;
@@ -3877,7 +4744,7 @@ function assignment_reset_course_form_defaults($course) {
  * Returns all other caps used in module
  */
 function assignment_get_extra_capabilities() {
-    return array('moodle/site:accessallgroups', 'moodle/site:viewfullnames', 'moodle/grade:managegradingforms');
+    return array('moodle/site:accessallgroups', 'moodle/site:viewfullnames');
 }
 
 /**
@@ -3895,8 +4762,6 @@ function assignment_supports($feature) {
         case FEATURE_GRADE_OUTCOMES:          return true;
         case FEATURE_GRADE_HAS_GRADE:         return true;
         case FEATURE_BACKUP_MOODLE2:          return true;
-        case FEATURE_SHOW_DESCRIPTION:        return true;
-        case FEATURE_ADVANCED_GRADING:        return true;
 
         default: return null;
     }
@@ -3950,7 +4815,7 @@ function assignment_extend_settings_navigation(settings_navigation $settings, na
 function assignment_pack_files($filesforzipping) {
         global $CFG;
         //create path for new zip file.
-        $tempzip = tempnam($CFG->tempdir.'/', 'assignment_');
+        $tempzip = tempnam($CFG->dataroot.'/temp/', 'assignment_');
         //zip files
         $zipper = new zip_packer();
         if ($zipper->archive_to_pathname($filesforzipping, $tempzip)) {
@@ -3962,12 +4827,10 @@ function assignment_pack_files($filesforzipping) {
 /**
  * Lists all file areas current user may browse
  *
- * @package  mod_assignment
- * @category files
- * @param stdClass $course course object
- * @param stdClass $cm course module object
- * @param stdClass $context context object
- * @return array available file areas
+ * @param object $course
+ * @param object $cm
+ * @param object $context
+ * @return array
  */
 function assignment_get_file_areas($course, $cm, $context) {
     $areas = array();
@@ -3975,45 +4838,6 @@ function assignment_get_file_areas($course, $cm, $context) {
         $areas['submission'] = get_string('assignmentsubmission', 'assignment');
     }
     return $areas;
-}
-
-/**
- * File browsing support for assignment module.
- *
- * @param file_browser $browser
- * @param array $areas
- * @param stdClass $course
- * @param cm_info $cm
- * @param context $context
- * @param string $filearea
- * @param int $itemid
- * @param string $filepath
- * @param string $filename
- * @return file_info_stored file_info_stored instance or null if not found
- */
-function mod_assignment_get_file_info($browser, $areas, $course, $cm, $context, $filearea, $itemid, $filepath, $filename) {
-    global $CFG, $DB, $USER;
-
-    if ($context->contextlevel != CONTEXT_MODULE || $filearea != 'submission') {
-        return null;
-    }
-    if (!$submission = $DB->get_record('assignment_submissions', array('id' => $itemid))) {
-        return null;
-    }
-    if (!(($submission->userid == $USER->id && has_capability('mod/assignment:view', $context))
-            || has_capability('mod/assignment:grade', $context))) {
-        // no permission to view this submission
-        return null;
-    }
-
-    $fs = get_file_storage();
-    $filepath = is_null($filepath) ? '/' : $filepath;
-    $filename = is_null($filename) ? '.' : $filename;
-    if (!($storedfile = $fs->get_file($context->id, 'mod_assignment', $filearea, $itemid, $filepath, $filename))) {
-        return null;
-    }
-    $urlbase = $CFG->wwwroot.'/pluginfile.php';
-    return new file_info_stored($browser, $context, $storedfile, $urlbase, $filearea, $itemid, true, true, false);
 }
 
 /**
@@ -4029,13 +4853,4 @@ function assignment_page_type_list($pagetype, $parentcontext, $currentcontext) {
         'mod-assignment-submissions'=>get_string('page-mod-assignment-submissions', 'assignment')
     );
     return $module_pagetype;
-}
-
-/**
- * Lists all gradable areas for the advanced grading methods gramework
- *
- * @return array
- */
-function assignment_grading_areas_list() {
-    return array('submission' => get_string('submissions', 'mod_assignment'));
 }

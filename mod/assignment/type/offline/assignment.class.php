@@ -1,5 +1,13 @@
 <?php
 
+/* ----- Giannis --------------- */
+require_once($CFG->dirroot.'/mod/assignment/locallib.php');
+
+if (is_readable($CFG->dirroot . '/local/cat/locallib.php')) {
+	require_once($CFG->dirroot.'/local/cat/locallib.php');
+}
+/* ----------------------------- */
+
 /**
  * Extend the base assignment class for offline assignments
  *
@@ -66,7 +74,7 @@ class assignment_offline extends assignment_base {
         if (!$grading_info->items[0]->grades[$feedback->userid]->locked and
             !$grading_info->items[0]->grades[$feedback->userid]->overridden) {
 
-            $submission->grade      = $feedback->xgrade;
+            
             $submission->submissioncomment    = $feedback->submissioncomment_editor['text'];
             $submission->teacher    = $USER->id;
             $mailinfo = get_user_preferences('assignment_mailinfo', 0);
@@ -83,11 +91,29 @@ class assignment_offline extends assignment_base {
             if (empty($submission->timemodified)) {   // eg for offline assignments
                 $submission->timemodified = time();
             }
-
+            
+            /* -------- Giannis ---------------------------- */
+            // Set the grade
+            $submission = assignment_set_grade($this->assignment, $submission, $feedback); 
+           	assignment_process_multiple_categories($this->assignment, $submission, $feedback);
+            /* ---------------------------------------------- */
+            
+            /* ----------------- Giannis ------------- */				
+						$mparam = get_markers_param($this->assignment->id);
+						if ($mparam != null && $mparam->type == 0) { // individual marking
+							assignment_process_multiple_markers($this->assignment, $submission, $feedback, $map);
+						}
+						else {
+            
             $DB->update_record('assignment_submissions', $submission);
 
-            // trigger grade event
+            // triger grade event
             $this->update_grade($submission);
+            
+            }
+
+						/* --------------------------------------- */
+            
 
             add_to_log($this->course->id, 'assignment', 'update grades',
                        'submissions.php?id='.$this->assignment->id.'&user='.$feedback->userid, $feedback->userid, $this->cm->id);

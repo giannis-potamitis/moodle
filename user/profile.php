@@ -43,6 +43,15 @@ require_once($CFG->libdir.'/filelib.php');
 $userid = optional_param('id', 0, PARAM_INT);
 $edit   = optional_param('edit', null, PARAM_BOOL);    // Turn editing on and off
 
+/* -------- Giannis ----------- */
+$check = optional_param('check', 0, PARAM_INT);
+$allowview = false;
+if ($check == 1) {
+	require_once($CFG->dirroot . '/local/markers/locallib.php');
+	$allowview = markers_allow_profile_view($USER->id, $userid);
+}
+/* ---------------------------- */
+
 $PAGE->set_url('/user/profile.php', array('id'=>$userid));
 
 if (!empty($CFG->forceloginforprofiles)) {
@@ -57,22 +66,13 @@ if (!empty($CFG->forceloginforprofiles)) {
 
 $userid = $userid ? $userid : $USER->id;       // Owner of the page
 $user = $DB->get_record('user', array('id' => $userid));
-
-if ($user->deleted) {
-    $PAGE->set_context(get_context_instance(CONTEXT_SYSTEM));
-    echo $OUTPUT->header();
-    echo $OUTPUT->heading(get_string('userdeleted'));
-    echo $OUTPUT->footer();
-    die;
-}
-
 $currentuser = ($user->id == $USER->id);
 $context = $usercontext = get_context_instance(CONTEXT_USER, $userid, MUST_EXIST);
 
 if (!$currentuser &&
     !empty($CFG->forceloginforprofiles) &&
     !has_capability('moodle/user:viewdetails', $context) &&
-    !has_coursecontact_role($userid)) {
+    !has_coursecontact_role($userid) && !$allowview) { /* --------------- Giannis ---------: added last condition !$allowview */
 
     // Course managers can be browsed at site level. If not forceloginforprofiles, allow access (bug #4366)
     $struser = get_string('user');
@@ -344,12 +344,6 @@ if (!isset($hiddenfields['lastaccess'])) {
 if (!empty($CFG->usetags)) {
     if ($interests = tag_get_tags_csv('user', $user->id) ) {
         print_row(get_string('interests') .": ", $interests);
-    }
-}
-
-if (!isset($hiddenfields['suspended'])) {
-    if ($user->suspended) {
-        print_row('', get_string('suspended', 'auth'));
     }
 }
 
